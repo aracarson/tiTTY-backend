@@ -1,0 +1,44 @@
+scalar DateTime
+scalar UUID
+
+type AccountIdentity {
+  accountID: String!
+  identiTTY: String!
+  publicKey: String!
+  createdAt: DateTime!
+}
+
+input RegisterAccountInput {
+  identiTTY: String!
+  accountID: String!
+  publicKey: String!
+}
+
+type AuthenticationChallenge {
+  challengeID: UUID!
+  challenge: String!
+  expiresAt: DateTime!
+}
+
+input AuthenticateInput {
+  accountID: String!
+  challengeID: UUID!
+  signature: String!
+}
+
+type AuthenticationSession {
+  token: String!
+  expiresAt: DateTime!
+}
+
+type Query {
+  isIdentiTTYAvailable(identiTTY: String!): Boolean!
+  account(identiTTY: String!): AccountIdentity
+  accountByID(accountID: String!): AccountIdentity
+}
+
+type Mutation {
+  registerAccount(input: RegisterAccountInput!): AccountIdentity!
+  requestChallenge(accountID: String!): AuthenticationChallenge!
+  authenticate(input: AuthenticateInput!): AuthenticationSession!
+}

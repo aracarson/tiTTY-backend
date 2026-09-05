@@ -1,0 +1,43 @@
+[Unit]
+Description=tiTTY identiTTY GraphQL identity service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=titty-backend
+Group=titty-backend
+WorkingDirectory=/opt/titty-backend
+EnvironmentFile=/etc/titty-backend/titty-backend.env
+ExecStart=/opt/titty-backend/bin/titty-backend
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+
+# Filesystem and process hardening
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/titty-backend
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# Keep an accidental loop from exhausting a micro instance
+MemoryMax=384M
+TasksMax=128
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

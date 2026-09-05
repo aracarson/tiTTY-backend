@@ -1,0 +1,8 @@
+/target
+.env
+/data/*.db-shm
+/data/*.db-wal
+/data/backups/
+*.pem
+*.key
+.DS_Store

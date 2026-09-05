@@ -1,0 +1,30 @@
+# MARK: - Task list
+# [x] Provide copyable GraphQL smoke-test operations
+
+query Availability {
+  isIdentiTTYAvailable(identiTTY: "aracarson")
+}
+
+mutation Register($input: RegisterAccountInput!) {
+  registerAccount(input: $input) {
+    accountID
+    identiTTY
+    publicKey
+    createdAt
+  }
+}
+
+mutation Challenge($accountID: String!) {
+  requestChallenge(accountID: $accountID) {
+    challengeID
+    challenge
+    expiresAt
+  }
+}
+
+mutation Authenticate($input: AuthenticateInput!) {
+  authenticate(input: $input) {
+    token
+    expiresAt
+  }
+}
