@@ -116,6 +116,15 @@ Resources:
                     - s3:PutObject
                     - s3:AbortMultipartUpload
                   Resource: !Sub arn:${AWS::Partition}:s3:::${BackupBucketName}/${BackupPrefix}/*
+                - Sid: WriteReports
+                  Effect: Allow
+                  Action:
+                    - s3:PutObject
+                    - s3:AbortMultipartUpload
+                  Resource:
+                    - !Sub arn:${AWS::Partition}:s3:::${BackupBucketName}/reports/metrics/*
+                    - !Sub arn:${AWS::Partition}:s3:::${BackupBucketName}/reports/security-reports/*
+                    - !Sub arn:${AWS::Partition}:s3:::${BackupBucketName}/reports/api/*
                 - Sid: ListBackupPrefix
                   Effect: Allow
                   Action:

@@ -136,6 +136,54 @@ Registration, challenge requests and authentication attempts have per-client rat
 
 The client private Ed25519 key never crosses the API boundary. The client signs the server-provided challenge locally, and the backend verifies the signature against the stored public key.
 
+## Security oversight and metrics
+
+Install the reporting scripts on the EC2 host:
+
+```bash
+sudo install -o root -g root -m 0755 scripts/generate-metrics.sh /opt/titty-backend/bin/generate-metrics.sh
+sudo install -o root -g root -m 0755 scripts/generate-security-report.sh /opt/titty-backend/bin/generate-security-report.sh
+sudo install -o root -g root -m 0755 scripts/install-security-logging.sh /opt/titty-backend/bin/install-security-logging.sh
+sudo bash /opt/titty-backend/bin/install-security-logging.sh
+```
+
+Generate aggregate registration metrics. The report does not include identiTTY values, AccountIDs, public keys, or JWTs:
+
+```bash
+sudo bash /opt/titty-backend/bin/generate-metrics.sh
+```
+
+Reports are written under `/var/lib/titty-backend/metrics/` and uploaded by default to `s3://identitty/reports/metrics/<timestamp>/`; set `TITTY_REPORTS_S3_URI` to override the destination. The newest local report is available at `metrics/latest/index.html`. Copy the HTML and CSV files to an operator workstation before opening them. Do not serve this directory through Caddy.
+
+Generate an operational security report:
+
+```bash
+sudo bash /opt/titty-backend/bin/generate-security-report.sh
+```
+
+Reports are written with mode `0600` under `/var/lib/titty-backend/security-reports/` and uploaded by default to `s3://identitty/reports/security-reports/`; set `TITTY_REPORTS_S3_URI` to override the destination. They include recent SSM and login activity, failed systemd units, critical service status, package history, listening sockets, and host resource state. They do not contain application secrets by design. Local report files older than 14 days are deleted only after the S3 upload succeeds; S3 retention is controlled separately by the bucket lifecycle policy.
+
+The EC2 instance role must allow `s3:PutObject` on both report prefixes in addition to the database backup prefix. Set `TITTY_REPORTS_S3_URI` if you want reports in a different bucket or prefix; otherwise the scripts use `s3://identitty/reports`.
+
+For deeper privileged-command auditing, install and enable auditd, then review reports carefully because audit logs can contain sensitive command arguments:
+
+```bash
+sudo dnf install -y audit
+sudo systemctl enable --now auditd
+```
+
+Also retain AWS CloudTrail for IAM, EC2, security-group, S3, and Route 53 changes. Host reports and application journald logs are complementary to CloudTrail, not a replacement for it.
+
+Generate API call metrics from the `titty-backend` journald request traces. The default window is the last 24 hours; pass a journald time expression to change it:
+
+```bash
+sudo install -o root -g root -m 0755 scripts/generate-api-metrics.sh /opt/titty-backend/bin/generate-api-metrics.sh
+sudo bash /opt/titty-backend/bin/generate-api-metrics.sh
+sudo bash /opt/titty-backend/bin/generate-api-metrics.sh "7 days ago"
+```
+
+The report groups `/graphql` and `/healthz` calls into 15-minute UTC buckets and writes an HTML histogram, CSV data, and a JSON summary. It uploads to `s3://identitty/reports/api/<timestamp>/` by default and removes local report directories older than 14 days only after the upload succeeds. The EC2 role needs `s3:PutObject` for `arn:aws:s3:::identitty/reports/api/*`.
+
 ## Important production work
 
 Before public registration, add request throttling at Caddy, nginx, AWS WAF, or an ALB. In particular, throttle `registerAccount`, `requestChallenge`, and failed `authenticate` operations by source IP and account. Keep application error messages generic. Monitor disk usage, backup success and authentication failure volume.

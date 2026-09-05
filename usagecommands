@@ -32,6 +32,28 @@ aws s3 presign \
   --expires-in 3600 \
   --region ca-central-1
 
+
+  ##### ALternate version for Powershell
+  aws s3 cp `
+  ./titty-backend-linux-arm64 `
+  s3://identitty/titty-backend-linux-arm64 `
+  --region ca-central-1
+
+## generate presigned URL
+aws s3 presign `
+  s3://identitty/titty-backend-linux-arm64 `
+  --expires-in 3600 `
+  --region ca-central-1
+
+
+#connect to AWS
+aws ssm start-session `
+  --target i-0d8718786fb333253 `
+  --region ca-central-1
+
+
+
+
 curl -fL 'PASTE_PRESIGNED_URL_HERE' -o /tmp/titty-backend
 
 

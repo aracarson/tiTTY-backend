@@ -53,8 +53,20 @@ if ! systemctl restart "${SERVICE_NAME}"; then
   exit 1
 fi
 
-if ! systemctl is-active --quiet "${SERVICE_NAME}" || ! curl --fail --silent --show-error "${HEALTH_URL}" >/dev/null; then
+healthy=false
+for attempt in {1..15}; do
+  if systemctl is-active --quiet "${SERVICE_NAME}" \
+    && curl --fail --silent --show-error "${HEALTH_URL}" >/dev/null; then
+    healthy=true
+    break
+  fi
+  sleep 1
+done
+
+if [[ "${healthy}" != true ]]; then
   echo "Service health check failed; restoring the previous binary." >&2
+  systemctl --no-pager --full status "${SERVICE_NAME}" >&2 || true
+  journalctl -u "${SERVICE_NAME}" -n 40 --no-pager >&2 || true
   if [[ -f "${BACKUP_BINARY}" ]]; then
     install -o root -g root -m 0755 "${BACKUP_BINARY}" "${TARGET_BINARY}"
     systemctl restart "${SERVICE_NAME}" || true
