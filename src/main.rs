@@ -16,6 +16,7 @@ use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{
     extract::{DefaultBodyLimit, State},
     http::{header, HeaderMap, HeaderValue, Method, StatusCode},
+    middleware,
     response::{IntoResponse, Response},
     routing::{get, post},
     Router,
@@ -27,7 +28,8 @@ use tower_http::{
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
     trace::TraceLayer,
 };
-use tracing::info;
+use tracing::{event, info, Level};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 // MARK: - Task list
 // [x] Expose GraphQL without GraphiQL
@@ -44,10 +46,26 @@ struct AppState {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "titty_backend=info,tower_http=info".into()),
+    let api_log_dir = std::env::var("TITTY_API_LOG_DIR")
+        .unwrap_or_else(|_| "/var/log/titty-backend".to_owned());
+    std::fs::create_dir_all(&api_log_dir)
+        .with_context(|| format!("could not create API log directory {api_log_dir}"))?;
+    let api_log = tracing_appender::rolling::daily(&api_log_dir, "api-access.jsonl");
+    let (api_writer, _api_log_guard) = tracing_appender::non_blocking(api_log);
+
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer().with_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "titty_backend=info,tower_http=info".into()),
+            ),
+        )
+        .with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_target(true)
+                .with_writer(api_writer)
+                .with_filter(tracing_subscriber::EnvFilter::new("api_access=info")),
         )
         .init();
 
@@ -86,6 +104,7 @@ async fn main() -> anyhow::Result<()> {
         ))
         .layer(TraceLayer::new_for_http())
         .layer(cors)
+        .layer(middleware::from_fn(api_access_log))
         .with_state(state);
 
     let address: SocketAddr = config
@@ -105,6 +124,32 @@ async fn main() -> anyhow::Result<()> {
         .await?;
 
     Ok(())
+}
+
+async fn api_access_log(request: axum::http::Request<axum::body::Body>, next: middleware::Next) -> Response {
+    let method = request.method().clone();
+    let endpoint = request.uri().path().to_owned();
+    let request_id = request
+        .headers()
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("unknown")
+        .to_owned();
+    let started = std::time::Instant::now();
+    let response = next.run(request).await;
+
+    event!(
+        target: "api_access",
+        Level::INFO,
+        event = "api_request",
+        method = %method,
+        endpoint = %endpoint,
+        status = response.status().as_u16(),
+        latency_ms = started.elapsed().as_secs_f64() * 1000.0,
+        request_id = %request_id,
+    );
+
+    response
 }
 
 async fn health() -> impl IntoResponse {

@@ -22,6 +22,7 @@ PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/titty-backend
+ReadWritePaths=/var/log/titty-backend
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true

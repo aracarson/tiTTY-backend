@@ -1,0 +1,7 @@
+[Unit]
+Description=Remove expired tiTTY API access logs
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/titty-backend/titty-backend.env
+ExecStart=/opt/titty-backend/bin/cull-api-logs.sh

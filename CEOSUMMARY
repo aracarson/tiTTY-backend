@@ -1,0 +1,22 @@
+CEO Summary
+Provides a secure identity API for account registration, identity lookup, challenge authentication, and JWT sessions.
+
+Uses public-key authentication, so private user keys never leave the client application or reach the server.
+
+Protects authenticated operations by validating JWT signatures, issuer, and expiration.
+
+Limits abuse with rate limits on registration, challenge requests, authentication attempts, and overall API traffic.
+
+Keeps the backend private, with Rust listening only on 127.0.0.1:8080.
+
+Exposes only HTTPS publicly through Caddy on port 443, with automatic TLS certificate management.
+
+Provides operational visibility through structured API access logs containing endpoint, status, latency, timestamp, and request ID.
+
+Creates API usage reports showing request volume by endpoint in 15-minute time buckets, with CSV, JSON, and HTML visualizations.
+
+Creates security oversight reports covering service health, SSM activity, login activity, failed services, package history, open ports, disk, and memory.
+
+Protects operational data by uploading reports to encrypted S3 storage and automatically deleting local logs older than 14 days.
+
+The result is a small, cost-conscious identity platform with authentication, abuse controls, HTTPS protection, operational monitoring, usage analytics, and recoverable AWS-based administration.

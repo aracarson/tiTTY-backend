@@ -18,6 +18,9 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 REPORT_DIR="${OUTPUT_DIR}/${STAMP}"
 JOURNAL_FILE="${REPORT_DIR}/journal.jsonl"
 
+echo "API metrics script version: api-15m-v2"
+echo "API metrics S3 destination: ${S3_ROOT%/}/api/${STAMP}/"
+
 if ! command -v journalctl >/dev/null 2>&1; then
   echo "journalctl is required" >&2
   exit 1
@@ -51,13 +54,14 @@ since = sys.argv[3]
 # tower_http emits fields such as method=POST uri=/graphql status=200 in the
 # journal message. Keep parsing limited to request traces and never export
 # headers, bodies, authorization values, or account identifiers.
-method_re = re.compile(r"(?:^|\s)method=(\S+)")
-uri_re = re.compile(r"(?:^|\s)uri=(\S+)")
-status_re = re.compile(r"(?:^|\s)status=(\d{3})")
-latency_re = re.compile(r"(?:^|\s)latency=([^\s]+)")
+method_re = re.compile(r'(?:^|\s|["{,])method(?:=|":)"?([A-Z]+)')
+uri_re = re.compile(r'(?:^|\s|["{,])uri(?:=|":)"?([^"\s,}]+)')
+status_re = re.compile(r'(?:^|\s|["{,])status(?:=|":)"?(\d{3})')
+latency_re = re.compile(r'(?:^|\s|["{,])latency(?:=|":)"?([^"\s,}]+)')
 
 buckets = defaultdict(lambda: {"requests": 0, "status_2xx": 0, "status_4xx": 0, "status_5xx": 0, "latency_ms": 0.0})
 skipped = 0
+matched = 0
 
 for line in journal_path.read_text(errors="replace").splitlines():
     try:
@@ -67,9 +71,10 @@ for line in journal_path.read_text(errors="replace").splitlines():
         continue
 
     message = entry.get("MESSAGE", "")
-    method_match = method_re.search(message)
-    uri_match = uri_re.search(message)
-    status_match = status_re.search(message)
+    search_text = message if isinstance(message, str) else json.dumps(entry, separators=(",", ":"))
+    method_match = method_re.search(search_text)
+    uri_match = uri_re.search(search_text)
+    status_match = status_re.search(search_text)
     if not (method_match and uri_match and status_match):
         continue
 
@@ -78,6 +83,8 @@ for line in journal_path.read_text(errors="replace").splitlines():
     status = int(status_match.group(1))
     if uri not in {"/graphql", "/healthz"}:
         continue
+
+    matched += 1
 
     timestamp_us = int(entry.get("__REALTIME_TIMESTAMP", "0"))
     if timestamp_us <= 0:
@@ -95,7 +102,7 @@ for line in journal_path.read_text(errors="replace").splitlines():
     elif status >= 500:
         item["status_5xx"] += 1
 
-    latency_match = latency_re.search(message)
+    latency_match = latency_re.search(search_text)
     if latency_match:
         value = latency_match.group(1).lower()
         try:
@@ -126,10 +133,11 @@ summary = {
     "generated_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     "request_rows": sum(item["requests"] for item in buckets.values()),
     "buckets": len(buckets),
+    "matched_requests": matched,
     "skipped_journal_lines": skipped,
 }
 (report_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
-chart_json = json.dumps(chart_rows, separators=(",", "))
+chart_json = json.dumps(chart_rows, separators=(",", ":"))
 
 html_report = f'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -152,10 +160,18 @@ ln -sfn "${REPORT_DIR}" "${OUTPUT_DIR}/latest"
 chmod 0640 "${REPORT_DIR}"/*
 chmod 0750 "${REPORT_DIR}" "${OUTPUT_DIR}"
 
+REPORT_OBJECTS="$(find "${REPORT_DIR}" -type f | wc -l)"
+if [[ "${REPORT_OBJECTS}" -eq 0 ]]; then
+    echo "No report files were generated; refusing to upload." >&2
+    exit 1
+fi
+
 aws s3 cp "${REPORT_DIR}/" "${S3_ROOT%/}/api/${STAMP}/" \
-  --recursive --only-show-errors --sse AES256
+    --recursive --only-show-errors --sse AES256
 
 find "${OUTPUT_DIR}" -mindepth 1 -maxdepth 1 -type d -mtime +14 -exec rm -rf -- {} +
 
 echo "Generated API metrics report: ${REPORT_DIR}"
 echo "Uploaded API metrics report: ${S3_ROOT%/}/api/${STAMP}/"
+echo "Uploaded objects: ${REPORT_OBJECTS}"
+echo "Matched request rows: $(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["matched_requests"])' "${REPORT_DIR}/summary.json")"

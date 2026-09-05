@@ -136,6 +136,28 @@ Registration, challenge requests and authentication attempts have per-client rat
 
 The client private Ed25519 key never crosses the API boundary. The client signs the server-provided challenge locally, and the backend verifies the signature against the stored public key.
 
+## Structured API access logging
+
+The Rust service writes one JSON access event per HTTP request to daily-rotated files under `/var/log/titty-backend/`. Each event contains the method, endpoint, status, latency, and request ID. Request headers, bodies, JWTs, public keys, AccountIDs, and identiTTY values are not written.
+
+Install the logging cleanup service on the EC2 host after deploying a binary that includes the logging layer:
+
+```bash
+sudo install -o root -g root -m 0755 /tmp/install-api-logging.sh /tmp/cull-api-logs.sh
+sudo install -o root -g root -m 0644 /tmp/titty-backend-api-log-cull.service /tmp/titty-backend-api-log-cull.timer
+sudo bash /tmp/install-api-logging.sh
+```
+
+The installer creates `/var/log/titty-backend/`, installs `titty-backend-api-log-cull.timer`, and restarts the backend. Rotated files older than 14 days are removed daily. Override the directory with `TITTY_API_LOG_DIR` and retention with `TITTY_API_LOG_RETENTION_DAYS` in the systemd environment file before restarting the service and cleanup timer.
+
+Inspect the logs with:
+
+```bash
+sudo ls -lh /var/log/titty-backend/
+sudo journalctl -u titty-backend-api-log-cull.service --no-pager
+sudo systemctl list-timers titty-backend-api-log-cull.timer
+```
+
 ## Security oversight and metrics
 
 Install the reporting scripts on the EC2 host:

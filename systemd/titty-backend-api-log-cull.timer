@@ -1,0 +1,9 @@
+[Unit]
+Description=Daily tiTTY API access log cleanup
+
+[Timer]
+OnCalendar=*-*-* 03:45:00
+Persistent=yes
+
+[Install]
+WantedBy=timers.target
