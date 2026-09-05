@@ -243,4 +243,4 @@ Outputs:
 
   GraphQLEndpoint:
     Description: Replace the host with your DNS name after configuring Caddy.
-    Value: https://identity.example.com/graphql
+    Value: https://iden.titty.app/graphql

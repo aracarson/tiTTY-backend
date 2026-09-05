@@ -10,7 +10,7 @@ if [[ "${EUID}" -ne 0 ]]; then
   exit 1
 fi
 
-DOMAIN="${1:?Usage: sudo ./scripts/install-caddy.sh identity.example.com}"
+DOMAIN="${1:?Usage: sudo ./scripts/install-caddy.sh iden.titty.app}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if ! command -v caddy >/dev/null 2>&1; then

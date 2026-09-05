@@ -6,8 +6,8 @@
     auto_https disable_redirects
 }
 
-# Replace identity.example.com before deployment.
-https://identity.example.com {
+# Replace iden.titty.app before deployment.
+https://iden.titty.app {
     encode zstd gzip
     reverse_proxy 127.0.0.1:8080
 

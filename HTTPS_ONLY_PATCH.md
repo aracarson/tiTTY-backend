@@ -22,15 +22,15 @@ Then run:
 
 ```bash
 sudo ./scripts/bootstrap-https-only.sh
-sudo ./scripts/install-caddy.sh identity.example.com
+sudo ./scripts/install-caddy.sh iden.titty.app
 sudo ./scripts/deploy.sh
 ```
 
 The public endpoints are:
 
 ```text
-POST https://identity.example.com/graphql
-GET  https://identity.example.com/healthz
+POST https://iden.titty.app/graphql
+GET  https://iden.titty.app/healthz
 ```
 
 There is no GraphiQL route. Port 8080 remains loopback-only. Public HTTP and public SSH are disabled.

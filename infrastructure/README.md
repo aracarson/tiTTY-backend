@@ -53,7 +53,7 @@ AWS_REGION=ca-central-1 \
 
 After deployment:
 
-1. Create an A record such as `identity.example.com` using the output Elastic IP.
+1. Create an A record such as `iden.titty.app` using the output Elastic IP.
 2. Connect with Systems Manager.
 3. Install the HTTPS-only Caddy configuration from the main backend patch.
 4. Deploy the Rust service.
