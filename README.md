@@ -111,3 +111,79 @@ A least-privilege instance role can use the policy in `config/s3-backup-policy.j
 Before public registration, add request throttling at Caddy, nginx, AWS WAF, or an ALB. In particular, throttle `registerAccount`, `requestChallenge`, and failed `authenticate` operations by source IP and account. Keep application error messages generic. Monitor disk usage, backup success and authentication failure volume.
 
 The included HMAC-signed JWT is an initial authenticated session mechanism. Add token revocation or reduce token lifetime before using sessions for high-impact account changes.
+
+
+#### Connection info
+
+Log in with the AWS CLI:
+
+```bash
+aws login
+```
+
+Set the deployment region if it is not already configured:
+
+```bash
+aws configure set region ca-central-1
+```
+
+Verify the active AWS account:
+
+```bash
+aws sts get-caller-identity
+```
+
+Find the running EC2 instance ID:
+
+```bash
+INSTANCE_ID=$(aws ec2 describe-instances \
+	--region ca-central-1 \
+	--filters "Name=tag:Name,Values=titty-backend" "Name=instance-state-name,Values=running" \
+	--query 'Reservations[0].Instances[0].InstanceId' \
+	--output text)
+
+echo "$INSTANCE_ID"
+```
+
+Check EC2 system and instance health:
+
+```bash
+aws ec2 describe-instance-status \
+	--region ca-central-1 \
+	--instance-ids "$INSTANCE_ID" \
+	--include-all-instances \
+	--query 'InstanceStatuses[0].[InstanceState.Name,SystemStatus.Status,InstanceStatus.Status]' \
+	--output table
+```
+
+Check that the instance is registered and online in Systems Manager:
+
+```bash
+aws ssm describe-instance-information \
+	--region ca-central-1 \
+	--filters "Key=InstanceIds,Values=$INSTANCE_ID" \
+	--query 'InstanceInformationList[0].[InstanceId,PingStatus,AgentVersion,PlatformName]' \
+	--output table
+```
+
+Start an interactive Session Manager shell:
+
+```bash
+aws ssm start-session \
+	--target "$INSTANCE_ID" \
+	--region ca-central-1
+```
+
+Inside the SSM session, check the services and local application health:
+
+```bash
+sudo systemctl --no-pager --full status caddy
+sudo systemctl --no-pager --full status titty-backend
+curl -fsS http://127.0.0.1:8080/healthz
+```
+
+From your local terminal, check the public HTTPS endpoint:
+
+```bash
+curl -fsS https://iden.titty.app/healthz
+```
