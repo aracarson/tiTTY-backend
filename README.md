@@ -73,6 +73,22 @@ The first deployment intentionally stops after creating:
 
 Edit it, set a strong JWT secret and the permitted origin, then rerun `deploy.sh`.
 
+### Updating the deployed binary
+
+Build and extract the ARM64 binary on the development machine, then upload it to the instance through your normal S3 and SSM workflow. Copy the updater script to the instance once:
+
+```bash
+sudo install -o root -g root -m 0755 scripts/update-binary.sh /opt/titty-backend/update-binary.sh
+```
+
+After uploading a new binary to `/tmp/titty-backend`, run this in the SSM session:
+
+```bash
+sudo bash /opt/titty-backend/update-binary.sh /tmp/titty-backend
+```
+
+The updater saves a timestamped rollback copy, installs the binary atomically, restarts `titty-backend.service`, checks the service and local `/healthz` endpoint, and restores the previous binary if the restart or health check fails. It expects the uploaded binary to target the instance architecture: Linux ARM64 (`aarch64`).
+
 ## HTTPS
 
 The Rust process binds to `127.0.0.1:8080` by default. Put Caddy, nginx, or an AWS Application Load Balancer in front of it for TLS. `config/Caddyfile.example` shows the simple Caddy route.
@@ -105,6 +121,20 @@ The backup script uses SQLite's `.backup` operation so that the uploaded snapsho
 ## Required IAM permissions
 
 A least-privilege instance role can use the policy in `config/s3-backup-policy.json`. Replace the bucket and prefix placeholders.
+
+## Identity API security
+
+The public GraphQL operations are:
+
+- `isIdentiTTYAvailable`, `account` and `accountByID` for public identity discovery
+- `registerAccount` for public-key registration
+- `requestChallenge` and `authenticate` for the challenge login flow
+
+The `me` query requires an `Authorization: Bearer <JWT>` header. The service validates the JWT signature, issuer and expiry before making the authenticated account available to resolvers.
+
+Registration, challenge requests and authentication attempts have per-client rate limits, and the GraphQL endpoint has a global per-client request limit. These limits are process-local and reset when the service restarts; use a shared edge limiter or distributed store when running multiple instances.
+
+The client private Ed25519 key never crosses the API boundary. The client signs the server-provided challenge locally, and the backend verifies the signature against the stored public key.
 
 ## Important production work
 

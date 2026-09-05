@@ -15,6 +15,7 @@ use crate::{
         AccountIdentity, AuthenticateInput, AuthenticationChallenge, AuthenticationSession,
         RegisterAccountInput,
     },
+    rate_limit,
     validation::normalise_identitty,
 };
 
@@ -33,6 +34,7 @@ impl MutationRoot {
         ctx: &Context<'_>,
         input: RegisterAccountInput,
     ) -> Result<AccountIdentity> {
+        rate_limit::enforce(ctx, "register", 5, std::time::Duration::from_secs(60))?;
         let pool = ctx.data::<SqlitePool>()?;
         let identitty =
             normalise_identitty(&input.identitty).map_err(async_graphql::Error::from)?;
@@ -78,6 +80,7 @@ impl MutationRoot {
         ctx: &Context<'_>,
         #[graphql(name = "accountID")] account_id: String,
     ) -> Result<AuthenticationChallenge> {
+        rate_limit::enforce(ctx, "challenge", 10, std::time::Duration::from_secs(60))?;
         let pool = ctx.data::<SqlitePool>()?;
         let config = ctx.data::<Arc<Config>>()?;
 
@@ -120,6 +123,7 @@ impl MutationRoot {
         ctx: &Context<'_>,
         input: AuthenticateInput,
     ) -> Result<AuthenticationSession> {
+        rate_limit::enforce(ctx, "authenticate", 10, std::time::Duration::from_secs(60))?;
         let pool = ctx.data::<SqlitePool>()?;
         let config = ctx.data::<Arc<Config>>()?;
         let mut transaction = pool.begin().await.map_err(|_| ApiError::Internal)?;

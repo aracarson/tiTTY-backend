@@ -1,0 +1,86 @@
+### TO build a new binary version:
+## git pull the repo for updates
+## on macos with docker buildx you can build a linux arm64 binary with the following command:
+
+docker buildx build \
+  --platform linux/arm64 \
+  --progress=plain \
+  -t titty-backend:latest \
+  --load \
+  .
+
+#then run the following command to extract the binary from the docker image:
+container=$(docker create titty-backend:latest)
+
+#then run the following command to copy the binary from the container to your local machine:
+docker cp \
+  "$container:/usr/local/bin/titty-backend" \
+  ./titty-backend-linux-arm64
+# cleanup the container
+docker rm "$container"
+
+
+## upload it to S3
+aws s3 cp \
+  ./titty-backend-linux-arm64 \
+  s3://identitty/titty-backend-linux-arm64 \
+  --region ca-central-1
+
+## generate presigned URL
+aws s3 presign \
+  s3://identitty/titty-backend-linux-arm64 \
+  --expires-in 3600 \
+  --region ca-central-1
+
+curl -fL 'PASTE_PRESIGNED_URL_HERE' -o /tmp/titty-backend
+
+
+sudo bash /opt/titty-backend/update-binary.sh /tmp/titty-backend
+
+
+
+
+## OR if the binary is already on the instance:
+
+
+##ON EC2 instance
+sudo install -o root -g root -m 0755 \
+  /path/to/update-binary.sh \
+  /opt/titty-backend/update-binary.sh
+
+## download new binary
+
+aws s3 cp \
+  s3://identitty/titty-backend-linux-arm64 \
+  /tmp/titty-backend \
+  --region ca-central-1
+
+
+
+        ## if this fails, run a presign from a logged in terminal (logged in to AWS CLI)
+        aws s3 presign \
+        s3://identitty/titty-backend-linux-arm64 \
+        --expires-in 3600 \
+        --region ca-central-1
+        ##then copy the presigned URL and run this command:
+
+        curl -fL 'PASTE_PRESIGNED_URL_HERE' -o /tmp/titty-backend
+
+
+## After downloading a new binary version to the EC2 instance, 
+## run the following command to update the binary
+
+sudo bash /opt/titty-backend/update-binary.sh /tmp/titty-backend
+
+
+
+
+
+
+
+
+
+
+
+
+

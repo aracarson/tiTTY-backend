@@ -3,7 +3,10 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use chrono::{DateTime, Utc};
 use sqlx::{FromRow, SqlitePool};
 
-use crate::{error::ApiError, models::AccountIdentity, validation::normalise_identitty};
+use crate::{
+    auth::AuthenticatedAccount, error::ApiError, models::AccountIdentity,
+    validation::normalise_identitty,
+};
 
 // MARK: - Task list
 // [x] Check availability
@@ -46,6 +49,13 @@ impl QueryRoot {
         #[graphql(name = "accountID")] account_id: String,
     ) -> Result<Option<AccountIdentity>> {
         find_account(ctx.data::<SqlitePool>()?, "account_id", &account_id).await
+    }
+
+    async fn me(&self, ctx: &Context<'_>) -> Result<Option<AccountIdentity>> {
+        let account = ctx
+            .data::<AuthenticatedAccount>()
+            .map_err(|_| ApiError::Unauthorized)?;
+        find_account(ctx.data::<SqlitePool>()?, "account_id", &account.account_id).await
     }
 }
 

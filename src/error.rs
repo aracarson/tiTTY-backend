@@ -18,6 +18,10 @@ pub enum ApiError {
     InvalidChallenge,
     #[error("Authentication failed")]
     AuthenticationFailed,
+    #[error("Authentication is required")]
+    Unauthorized,
+    #[error("Too many requests")]
+    RateLimited,
     #[error("An internal service error occurred")]
     Internal,
 }
@@ -31,6 +35,8 @@ impl ErrorExtensions for ApiError {
             Self::AccountNotFound => "ACCOUNT_NOT_FOUND",
             Self::InvalidChallenge => "INVALID_CHALLENGE",
             Self::AuthenticationFailed => "AUTHENTICATION_FAILED",
+            Self::Unauthorized => "UNAUTHORIZED",
+            Self::RateLimited => "RATE_LIMITED",
             Self::Internal => "INTERNAL_ERROR",
         };
         Error::new(self.to_string()).extend_with(|_, extensions| {
