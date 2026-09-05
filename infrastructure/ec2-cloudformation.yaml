@@ -1,0 +1,246 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  HTTPS-only ARM64 EC2 host for the tiTTY identiTTY GraphQL backend.
+  Creates a Graviton instance, security group, Systems Manager role,
+  encrypted EBS storage, Elastic IP, and optional S3 backup permissions.
+
+# MARK: - Task list
+# [x] Use the latest Amazon Linux 2023 ARM64 AMI from SSM
+# [x] Allow public inbound TCP only on 443
+# [x] Require IMDSv2
+# [x] Encrypt the root EBS volume
+# [x] Use Systems Manager instead of public SSH
+# [x] Grant least-privilege access to the configured S3 backup prefix
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC in which the identiTTY instance will run.
+
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public subnet with a route to an Internet gateway.
+
+  InstanceType:
+    Type: String
+    Default: t4g.micro
+    AllowedValues:
+      - t4g.nano
+      - t4g.micro
+      - t4g.small
+    Description: ARM-based Graviton instance type.
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64
+    Description: Latest Amazon Linux 2023 ARM64 AMI.
+
+  RootVolumeSize:
+    Type: Number
+    Default: 12
+    MinValue: 8
+    MaxValue: 64
+    Description: Encrypted gp3 root volume size in GiB.
+
+  BackupBucketName:
+    Type: String
+    Default: ""
+    Description: Existing private S3 bucket used for SQLite backups. Leave empty to omit S3 permissions.
+
+  BackupPrefix:
+    Type: String
+    Default: titty-backend
+    AllowedPattern: "^[A-Za-z0-9][A-Za-z0-9/_-]*$"
+    Description: Object-key prefix for SQLite backups.
+
+Conditions:
+  HasBackupBucket: !Not [!Equals [!Ref BackupBucketName, ""]]
+
+Resources:
+  IdentitySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Public HTTPS only for the tiTTY identity service
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - Description: HTTPS from IPv4 Internet
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - Description: Outbound HTTPS for SSM, packages, certificates, and S3
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - Description: DNS over UDP through the VPC resolver path
+          IpProtocol: udp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 0.0.0.0/0
+        - Description: DNS over TCP through the VPC resolver path
+          IpProtocol: tcp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: tiTTY-backend-https-only
+
+  IdentityInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub titty-backend-${AWS::Region}-instance-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - !If
+          - HasBackupBucket
+          - PolicyName: WriteIdentityBackups
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Sid: WriteBackupObjects
+                  Effect: Allow
+                  Action:
+                    - s3:PutObject
+                    - s3:AbortMultipartUpload
+                  Resource: !Sub arn:${AWS::Partition}:s3:::${BackupBucketName}/${BackupPrefix}/*
+                - Sid: ListBackupPrefix
+                  Effect: Allow
+                  Action:
+                    - s3:ListBucket
+                  Resource: !Sub arn:${AWS::Partition}:s3:::${BackupBucketName}
+                  Condition:
+                    StringLike:
+                      s3:prefix:
+                        - !Sub ${BackupPrefix}/*
+          - !Ref AWS::NoValue
+
+  IdentityInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref IdentityInstanceRole
+
+  IdentityLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub titty-backend-${AWS::StackName}
+      LaunchTemplateData:
+        ImageId: !Ref LatestAmiId
+        InstanceType: !Ref InstanceType
+        IamInstanceProfile:
+          Arn: !GetAtt IdentityInstanceProfile.Arn
+        MetadataOptions:
+          HttpEndpoint: enabled
+          HttpTokens: required
+          HttpPutResponseHopLimit: 1
+          InstanceMetadataTags: enabled
+        SecurityGroupIds:
+          - !Ref IdentitySecurityGroup
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              DeleteOnTermination: true
+              Encrypted: true
+              VolumeSize: !Ref RootVolumeSize
+              VolumeType: gp3
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: tiTTY-backend
+              - Key: Service
+                Value: identiTTY
+          - ResourceType: volume
+            Tags:
+              - Key: Name
+                Value: tiTTY-backend-root
+        UserData:
+          Fn::Base64: !Sub |
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            dnf update -y
+            dnf install -y firewalld amazon-ssm-agent sqlite awscli2 git tar gzip
+
+            systemctl enable --now amazon-ssm-agent
+            systemctl enable --now firewalld
+
+            firewall-cmd --permanent --zone=public --remove-service=http || true
+            firewall-cmd --permanent --zone=public --remove-service=ssh || true
+            firewall-cmd --permanent --zone=public --remove-port=22/tcp || true
+            firewall-cmd --permanent --zone=public --remove-port=80/tcp || true
+            firewall-cmd --permanent --zone=public --remove-port=8080/tcp || true
+            firewall-cmd --permanent --zone=public --add-service=https
+            firewall-cmd --reload
+
+            install -d -o root -g root -m 0755 /opt/titty-backend /opt/titty-backend/bin
+            install -d -o root -g root -m 0755 /opt/titty-backend/source
+            install -d -o root -g root -m 0755 /var/log/titty-backend
+            install -d -o root -g root -m 0755 /etc/titty-backend
+
+            if ! id titty-backend >/dev/null 2>&1; then
+              useradd --system --home-dir /var/lib/titty-backend --shell /sbin/nologin titty-backend
+            fi
+
+            install -d -o titty-backend -g titty-backend -m 0700 /var/lib/titty-backend
+            install -d -o root -g titty-backend -m 0750 /etc/titty-backend
+
+            cat >/etc/titty-backend/instance-template.env <<'ENV'
+            TITTY_BIND_ADDRESS=127.0.0.1:8080
+            TITTY_DATABASE_URL=sqlite:///var/lib/titty-backend/identity.db?mode=rwc
+            TITTY_DATABASE_PATH=/var/lib/titty-backend/identity.db
+            TITTY_BACKUP_DIR=/var/lib/titty-backend/backups
+            TITTY_BACKUP_S3_URI=s3://${BackupBucketName}/${BackupPrefix}
+            ENV
+            chown root:titty-backend /etc/titty-backend/instance-template.env
+            chmod 0640 /etc/titty-backend/instance-template.env
+
+  IdentityInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      SubnetId: !Ref SubnetId
+      LaunchTemplate:
+        LaunchTemplateId: !Ref IdentityLaunchTemplate
+        Version: !GetAtt IdentityLaunchTemplate.LatestVersionNumber
+      Tags:
+        - Key: Name
+          Value: tiTTY-backend
+
+  IdentityElasticIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref IdentityInstance
+      Tags:
+        - Key: Name
+          Value: tiTTY-backend-eip
+
+Outputs:
+  InstanceId:
+    Description: EC2 instance ID for Systems Manager access.
+    Value: !Ref IdentityInstance
+
+  PublicIPAddress:
+    Description: Elastic IP to use for the identity DNS A record.
+    Value: !Ref IdentityElasticIP
+
+  SystemsManagerTarget:
+    Description: Session Manager target command.
+    Value: !Sub aws ssm start-session --target ${IdentityInstance}
+
+  GraphQLEndpoint:
+    Description: Replace the host with your DNS name after configuring Caddy.
+    Value: https://identity.example.com/graphql

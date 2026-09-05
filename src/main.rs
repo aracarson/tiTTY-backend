@@ -10,12 +10,11 @@ mod validation;
 use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Context;
-use async_graphql::{http::GraphiQLSource, EmptySubscription};
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{
     extract::{DefaultBodyLimit, State},
     http::{header, HeaderValue, Method, StatusCode},
-    response::{Html, IntoResponse},
+    response::IntoResponse,
     routing::{get, post},
     Router,
 };
@@ -29,8 +28,8 @@ use tower_http::{
 use tracing::info;
 
 // MARK: - Task list
-// [x] Expose a small GraphQL identity API
-// [x] Bind privately by default for reverse-proxy TLS termination
+// [x] Expose GraphQL without GraphiQL
+// [x] Bind privately for HTTPS reverse-proxy termination
 // [x] Apply request-size, CORS, tracing and request-ID middleware
 
 #[derive(Clone)]
@@ -59,16 +58,17 @@ async fn main() -> anyhow::Result<()> {
 
     let cors = CorsLayer::new()
         .allow_origin(
-            config.allowed_origin.parse::<HeaderValue>()
+            config
+                .allowed_origin
+                .parse::<HeaderValue>()
                 .context("TITTY_ALLOWED_ORIGIN is not a valid origin")?,
         )
-        .allow_methods([Method::GET, Method::POST])
+        .allow_methods([Method::POST])
         .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
 
     let app = Router::new()
         .route("/healthz", get(health))
         .route("/graphql", post(graphql_handler))
-        .route("/graphiql", get(graphiql))
         .layer(DefaultBodyLimit::max(config.max_body_bytes))
         .layer(PropagateRequestIdLayer::x_request_id())
         .layer(SetRequestIdLayer::new(
@@ -79,10 +79,17 @@ async fn main() -> anyhow::Result<()> {
         .layer(cors)
         .with_state(state);
 
-    let address: SocketAddr = config.bind_address.parse()
+    let address: SocketAddr = config
+        .bind_address
+        .parse()
         .context("TITTY_BIND_ADDRESS is invalid")?;
+
+    if !address.ip().is_loopback() {
+        anyhow::bail!("TITTY_BIND_ADDRESS must use a loopback address in production");
+    }
+
     let listener = tokio::net::TcpListener::bind(address).await?;
-    info!(%address, "identiTTY GraphQL service listening");
+    info!(%address, "identiTTY GraphQL service listening privately");
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
@@ -102,17 +109,11 @@ async fn graphql_handler(
     state.schema.execute(request.into_inner()).await.into()
 }
 
-async fn graphiql() -> Html<String> {
-    Html(
-        GraphiQLSource::build()
-            .endpoint("/graphql")
-            .finish(),
-    )
-}
-
 async fn shutdown_signal() {
     let ctrl_c = async {
-        tokio::signal::ctrl_c().await.expect("failed to install Ctrl+C handler");
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
     };
 
     #[cfg(unix)]

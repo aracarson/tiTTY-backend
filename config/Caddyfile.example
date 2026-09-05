@@ -1,12 +1,25 @@
+{
+    # MARK: - Task list
+    # [x] Serve only HTTPS
+    # [x] Do not start an HTTP redirect listener
+    # [x] Keep Axum private on loopback
+    auto_https disable_redirects
+}
+
 # Replace identity.example.com before deployment.
-identity.example.com {
+https://identity.example.com {
     encode zstd gzip
     reverse_proxy 127.0.0.1:8080
+
+    request_body {
+        max_size 64KB
+    }
 
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
         X-Content-Type-Options "nosniff"
         Referrer-Policy "no-referrer"
+        Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
         -Server
     }
 }

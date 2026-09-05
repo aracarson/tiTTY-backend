@@ -1,0 +1,26 @@
+[
+  {
+    "ParameterKey": "VpcId",
+    "ParameterValue": "vpc-REPLACE"
+  },
+  {
+    "ParameterKey": "SubnetId",
+    "ParameterValue": "subnet-REPLACE"
+  },
+  {
+    "ParameterKey": "InstanceType",
+    "ParameterValue": "t4g.micro"
+  },
+  {
+    "ParameterKey": "RootVolumeSize",
+    "ParameterValue": "12"
+  },
+  {
+    "ParameterKey": "BackupBucketName",
+    "ParameterValue": "REPLACE_PRIVATE_BUCKET"
+  },
+  {
+    "ParameterKey": "BackupPrefix",
+    "ParameterValue": "titty-backend"
+  }
+]
