@@ -13,7 +13,10 @@ pub fn normalise_identitty(value: &str) -> Result<String, ApiError> {
     }
 
     let mut chars = value.chars();
-    if !chars.next().is_some_and(|character| character.is_ascii_lowercase()) {
+    if !chars
+        .next()
+        .is_some_and(|character| character.is_ascii_lowercase())
+    {
         return Err(ApiError::InvalidIdentitty);
     }
 

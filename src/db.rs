@@ -24,9 +24,15 @@ pub async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
 }
 
 pub async fn apply_runtime_pragmas(pool: &SqlitePool) -> anyhow::Result<()> {
-    sqlx::query("PRAGMA journal_mode = WAL").execute(pool).await?;
-    sqlx::query("PRAGMA synchronous = FULL").execute(pool).await?;
-    sqlx::query("PRAGMA secure_delete = ON").execute(pool).await?;
+    sqlx::query("PRAGMA journal_mode = WAL")
+        .execute(pool)
+        .await?;
+    sqlx::query("PRAGMA synchronous = FULL")
+        .execute(pool)
+        .await?;
+    sqlx::query("PRAGMA secure_delete = ON")
+        .execute(pool)
+        .await?;
     Ok(())
 }
 

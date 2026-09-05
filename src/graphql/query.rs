@@ -21,13 +21,12 @@ impl QueryRoot {
     ) -> Result<bool> {
         let identitty = normalise_identitty(&identitty).map_err(async_graphql::Error::from)?;
         let pool = ctx.data::<SqlitePool>()?;
-        let exists: i64 = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM accounts WHERE identitty = ?)",
-        )
-        .bind(identitty)
-        .fetch_one(pool)
-        .await
-        .map_err(|_| ApiError::Internal)?;
+        let exists: i64 =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts WHERE identitty = ?)")
+                .bind(identitty)
+                .fetch_one(pool)
+                .await
+                .map_err(|_| ApiError::Internal)?;
         Ok(exists == 0)
     }
 

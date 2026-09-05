@@ -8,13 +8,12 @@ use sqlx::{FromRow, SqlitePool};
 use uuid::Uuid;
 
 use crate::{
-    account_id,
-    auth,
+    account_id, auth,
     config::Config,
     error::ApiError,
     models::{
-        AccountIdentity, AuthenticateInput, AuthenticationChallenge,
-        AuthenticationSession, RegisterAccountInput,
+        AccountIdentity, AuthenticateInput, AuthenticationChallenge, AuthenticationSession,
+        RegisterAccountInput,
     },
     validation::normalise_identitty,
 };
@@ -35,9 +34,10 @@ impl MutationRoot {
         input: RegisterAccountInput,
     ) -> Result<AccountIdentity> {
         let pool = ctx.data::<SqlitePool>()?;
-        let identitty = normalise_identitty(&input.identitty)
-            .map_err(async_graphql::Error::from)?;
-        let public_key = STANDARD.decode(&input.public_key)
+        let identitty =
+            normalise_identitty(&input.identitty).map_err(async_graphql::Error::from)?;
+        let public_key = STANDARD
+            .decode(&input.public_key)
             .map_err(|_| ApiError::InvalidRegistration)?;
 
         if public_key.len() != 32 {
@@ -81,13 +81,12 @@ impl MutationRoot {
         let pool = ctx.data::<SqlitePool>()?;
         let config = ctx.data::<Arc<Config>>()?;
 
-        let exists: i64 = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM accounts WHERE account_id = ?)",
-        )
-        .bind(&account_id)
-        .fetch_one(pool)
-        .await
-        .map_err(|_| ApiError::Internal)?;
+        let exists: i64 =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts WHERE account_id = ?)")
+                .bind(&account_id)
+                .fetch_one(pool)
+                .await
+                .map_err(|_| ApiError::Internal)?;
 
         if exists == 0 {
             return Err(ApiError::AccountNotFound.into());
@@ -158,8 +157,7 @@ impl MutationRoot {
         }
 
         transaction.commit().await.map_err(|_| ApiError::Internal)?;
-        auth::issue_session(&input.account_id, config)
-            .map_err(async_graphql::Error::from)
+        auth::issue_session(&input.account_id, config).map_err(async_graphql::Error::from)
     }
 }
 

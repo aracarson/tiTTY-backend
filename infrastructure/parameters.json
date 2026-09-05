@@ -1,11 +1,11 @@
 [
   {
     "ParameterKey": "VpcId",
-    "ParameterValue": "vpc-REPLACE"
+    "ParameterValue": "vpc-892758e1"
   },
   {
     "ParameterKey": "SubnetId",
-    "ParameterValue": "subnet-REPLACE"
+    "ParameterValue": "subnet-ffc9e9a3"
   },
   {
     "ParameterKey": "InstanceType",
@@ -17,10 +17,10 @@
   },
   {
     "ParameterKey": "BackupBucketName",
-    "ParameterValue": "REPLACE_PRIVATE_BUCKET"
+    "ParameterValue": "identitty"
   },
   {
     "ParameterKey": "BackupPrefix",
-    "ParameterValue": "titty-backend"
+    "ParameterValue": "backup"
   }
 ]

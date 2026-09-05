@@ -234,7 +234,7 @@ Outputs:
     Value: !Ref IdentityInstance
 
   PublicIPAddress:
-    Description: Elastic IP to use for the identity DNS A record.
+    Description: Stable Elastic IP to use for the identity DNS A record.
     Value: !Ref IdentityElasticIP
 
   SystemsManagerTarget:

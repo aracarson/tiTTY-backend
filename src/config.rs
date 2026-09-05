@@ -24,10 +24,7 @@ impl Config {
 
         Ok(Self {
             bind_address: optional("TITTY_BIND_ADDRESS", "127.0.0.1:8080"),
-            database_url: optional(
-                "TITTY_DATABASE_URL",
-                "sqlite://data/identity.db?mode=rwc",
-            ),
+            database_url: optional("TITTY_DATABASE_URL", "sqlite://data/identity.db?mode=rwc"),
             jwt_secret,
             jwt_issuer: optional("TITTY_JWT_ISSUER", "titty-identity"),
             session_ttl_seconds: parse("TITTY_SESSION_TTL_SECONDS", 3600)?,
