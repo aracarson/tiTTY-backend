@@ -106,3 +106,8 @@ sudo bash /opt/titty-backend/update-binary.sh /tmp/titty-backend
 
 
 
+
+
+
+## for scripts that generate metrics, you can run the following commands to generate and upload metrics reports to S3:
+## 

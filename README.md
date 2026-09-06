@@ -196,7 +196,7 @@ sudo systemctl enable --now auditd
 
 Also retain AWS CloudTrail for IAM, EC2, security-group, S3, and Route 53 changes. Host reports and application journald logs are complementary to CloudTrail, not a replacement for it.
 
-Generate API call metrics from the `titty-backend` journald request traces. The default window is the last 24 hours; pass a journald time expression to change it:
+Generate API call metrics from the backend's aggregate SQLite request counters. The default window is the last 24 hours; pass a time expression to change it:
 
 ```bash
 sudo install -o root -g root -m 0755 scripts/generate-api-metrics.sh /opt/titty-backend/bin/generate-api-metrics.sh
@@ -204,7 +204,7 @@ sudo bash /opt/titty-backend/bin/generate-api-metrics.sh
 sudo bash /opt/titty-backend/bin/generate-api-metrics.sh "7 days ago"
 ```
 
-The report groups `/graphql` and `/healthz` calls into 15-minute UTC buckets and writes an HTML histogram, CSV data, and a JSON summary. It uploads to `s3://identitty/reports/api/<timestamp>/` by default and removes local report directories older than 14 days only after the upload succeeds. The EC2 role needs `s3:PutObject` for `arn:aws:s3:::identitty/reports/api/*`.
+The backend records `/graphql` and `/healthz` calls directly into the `api_request_metrics` table in 15-minute UTC buckets, grouped by method, endpoint, and status class. The report writes an HTML histogram, CSV data, and a JSON summary. It uploads to `s3://identitty/reports/api/<timestamp>/` by default and removes local report directories older than 14 days only after the upload succeeds. The EC2 role needs `s3:PutObject` for `arn:aws:s3:::identitty/reports/api/*`.
 
 ## Important production work
 

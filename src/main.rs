@@ -13,6 +13,7 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use anyhow::Context;
 use async_graphql::Request as GraphQLRequestData;
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
+use chrono::Utc;
 use axum::{
     extract::{DefaultBodyLimit, State},
     http::{header, HeaderMap, HeaderValue, Method, StatusCode},
@@ -29,7 +30,7 @@ use tower_http::{
     trace::TraceLayer,
 };
 use tracing::{event, info, Level};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
 // MARK: - Task list
 // [x] Expose GraphQL without GraphiQL
@@ -39,6 +40,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 #[derive(Clone)]
 struct AppState {
     schema: AppSchema,
+    pool: sqlx::SqlitePool,
     config: Arc<Config>,
     rate_limiter: Arc<rate_limit::RateLimiter>,
 }
@@ -76,9 +78,10 @@ async fn main() -> anyhow::Result<()> {
     db::remove_expired_challenges(&pool).await?;
 
     let rate_limiter = Arc::new(rate_limit::RateLimiter::default());
-    let schema = build_schema(pool, config.clone(), rate_limiter.clone());
+    let schema = build_schema(pool.clone(), config.clone(), rate_limiter.clone());
     let state = AppState {
         schema,
+        pool,
         config: config.clone(),
         rate_limiter,
     };
@@ -104,7 +107,7 @@ async fn main() -> anyhow::Result<()> {
         ))
         .layer(TraceLayer::new_for_http())
         .layer(cors)
-        .layer(middleware::from_fn(api_access_log))
+        .layer(middleware::from_fn_with_state(state.clone(), api_access_log))
         .with_state(state);
 
     let address: SocketAddr = config
@@ -126,7 +129,11 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn api_access_log(request: axum::http::Request<axum::body::Body>, next: middleware::Next) -> Response {
+async fn api_access_log(
+    State(state): State<AppState>,
+    request: axum::http::Request<axum::body::Body>,
+    next: middleware::Next,
+) -> Response {
     let method = request.method().clone();
     let endpoint = request.uri().path().to_owned();
     let request_id = request
@@ -148,6 +155,19 @@ async fn api_access_log(request: axum::http::Request<axum::body::Body>, next: mi
         latency_ms = started.elapsed().as_secs_f64() * 1000.0,
         request_id = %request_id,
     );
+
+    if let Err(error) = db::record_api_request(
+        &state.pool,
+        Utc::now(),
+        method.as_str(),
+        &endpoint,
+        response.status().as_u16(),
+        started.elapsed().as_secs_f64() * 1000.0,
+    )
+    .await
+    {
+        tracing::warn!(%error, "could not record API request metrics");
+    }
 
     response
 }

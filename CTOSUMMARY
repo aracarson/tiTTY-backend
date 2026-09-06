@@ -1,0 +1,116 @@
+
+
+
+Theoretical Worst Case
+The worst realistic scenario is a combination of application compromise and resource exhaustion:
+
+A vulnerability is found in the public GraphQL API, such as a dependency flaw, authorization bug, or input-handling error.
+
+An attacker gains code execution as the titty-backend user. They could read the SQLite database, application configuration, JWT secret, API logs, and backup tooling.
+
+The EC2 instance role is abused. Depending on its current permissions, the attacker could upload or alter S3 backups/reports, modify Route 53 ACME records, or interact with Systems Manager-related AWS APIs.
+
+The live database could be modified or destroyed. This could cause identity impersonation, registration tampering, or service disruption.
+
+The single EC2 instance could be overwhelmed. Registration, challenge, authentication, and GraphQL requests could exhaust CPU, memory, connections, or disk space.
+
+Rate limiting could be bypassed. The current limiter is in-process and relies on forwarding headers for client identity. If those headers are spoofable through the proxy path, attackers may appear as many clients.
+
+AWS costs could increase. The largest risks are network traffic and any additional AWS services placed in front of the instance. The small EC2 instance itself has mostly predictable hourly cost, but abuse can still cause bandwidth, logging, S3, or WAF/CloudFront charges.
+
+A stolen administrative credential could be catastrophic. An active IAM-user access key with broad permissions could allow changes to EC2, IAM, S3, Route 53, or security groups. Temporary keys must be deleted, not merely forgotten.
+
+A compromised deployment path could replace the binary. Manual S3 uploads and presigned URLs create supply-chain risk if the wrong artifact is uploaded or a credential is exposed.
+
+Recovery could be incomplete. If backups are overwritten, deleted, or never tested, an attacker could cause permanent data loss despite the backup process existing.
+
+What Is Most Likely Today?
+The most immediate risks are:
+
+Single-instance denial of service
+Public abuse of registration and authentication endpoints
+Weak or spoofable client-IP rate limiting
+Excessive IAM permissions
+Unverified backups and restore procedures
+Exposed or stale IAM-user access keys
+Manual deployment mistakes
+The server is reasonably hardened for a small first deployment, but it is not yet designed to withstand a determined internet-scale attack.
+
+Highest-Value Improvements
+Put AWS WAF or another edge rate limiter in front of the instance.
+Fix trusted client-IP handling and avoid trusting arbitrary X-Forwarded-For.
+Add AWS Budgets and billing alarms.
+Narrow the EC2 role to exact S3 and Route 53 prefixes.
+Delete all temporary IAM-user access keys.
+Add dependency scanning and automatic security patching.
+Test restoring an S3 backup to a separate database.
+Add alerting for authentication failures, rate-limit events, CPU, memory, disk, and network spikes.
+Use signed release artifacts or checksums for binary deployment.
+Move to a managed edge/load-balancing architecture before significant public growth.
+
+
+
+Q:
+how much would AWS WAF cost to implement, and once that is done, what is the benefit of doing the rest
+
+
+
+Estimated AWS Cost
+AWS WAF cannot attach directly to a standalone EC2 public IP. You would typically add either:
+
+Option A: CloudFront + WAF
+Approximate baseline:
+
+WAF web ACL: about $5/month
+One WAF rule: about $1/month
+WAF requests: about $0.60 per million requests
+AWS managed rule groups: often additional monthly charges
+CloudFront: separate request and bandwidth charges
+For low traffic, a reasonable starting estimate is roughly:
+$6-$15/month plus CloudFront traffic charges
+
+Option B: Application Load Balancer + WAF
+Approximate baseline:
+
+WAF: about $6/month before request charges
+ALB: roughly $16/month base cost before LCU usage
+WAF requests and ALB usage: additional
+A low-traffic estimate is approximately:
+$25-$40/month plus traffic and usage charges
+
+Pricing changes by region, rules, managed rule groups, and traffic volume, so treat these as planning numbers rather than a quote.
+
+What WAF Adds
+WAF would sit before your EC2 instance and help block:
+
+Common exploit patterns
+Malformed or suspicious requests
+Known bad IPs and bot traffic
+SQL injection and cross-site scripting patterns
+Excessive request rates
+Large request floods before they reach Rust
+This is especially valuable because your current rate limiter runs inside the EC2 process. WAF can reject traffic before it consumes application CPU, memory, database connections, or Rust rate-limit buckets.
+
+Why Do the Rest After WAF?
+WAF is an important outer layer, but it does not replace the rest of the security program.
+
+JWT validation and resolver authorization prevent authenticated users from accessing data they do not own.
+Application rate limiting protects specific operations such as registration, challenge requests, and authentication.
+Trusted client-IP handling prevents attackers from spoofing forwarding headers to evade limits.
+Least-privilege IAM limits damage if the instance or application is compromised.
+Structured logging gives you evidence of what happened.
+Security reports and alerts help detect attacks and failures.
+Backups and restore testing protect against data destruction.
+Dependency scanning and patching reduce vulnerability exposure.
+Signed binary releases reduce deployment tampering risk.
+AWS Budgets and alarms help detect unexpected usage costs.
+Recommended Order
+Add AWS Budgets and billing alerts immediately.
+Keep the current application JWT and rate-limit protections.
+Fix trusted proxy/client-IP handling.
+Enable structured logs and alerting.
+Verify backups by performing a restore test.
+Narrow IAM policies and remove temporary IAM-user keys.
+Add CloudFront + WAF when the API becomes public or traffic increases.
+Move away from direct public EC2 ingress and allow the instance to receive traffic only from the edge layer.
+For your current low-resource deployment, WAF is most useful when the API is publicly discoverable or begins receiving meaningful traffic. The immediate low-cost protections are IAM tightening, billing alarms, tested backups, structured logs, and correct application authorization.
