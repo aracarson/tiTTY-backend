@@ -11,6 +11,11 @@ TARGET_BINARY="/opt/titty-backend/bin/titty-backend"
 INSTALL_DIR="/opt/titty-backend/bin"
 SERVICE_NAME="titty-backend.service"
 HEALTH_URL="http://127.0.0.1:8080/healthz"
+ENV_FILE="/etc/titty-backend/titty-backend.env"
+if [[ -r "${ENV_FILE}" ]]; then
+  source "${ENV_FILE}"
+fi
+DATABASE_PATH="${TITTY_DATABASE_PATH:-/var/lib/titty-backend/identity.db}"
 BACKUP_BINARY="${TARGET_BINARY}.$(date -u +%Y%m%dT%H%M%SZ).bak"
 TEMP_BINARY="${TARGET_BINARY}.new.$$"
 
@@ -41,14 +46,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
+rollback() {
+  install -o root -g root -m 0755 "${BACKUP_BINARY}" "${TARGET_BINARY}"
+  systemctl restart "${SERVICE_NAME}" || true
+}
+
 install -o root -g root -m 0755 "${SOURCE_BINARY}" "${TEMP_BINARY}"
 mv -f "${TEMP_BINARY}" "${TARGET_BINARY}"
 
 if ! systemctl restart "${SERVICE_NAME}"; then
   echo "Service restart failed; restoring the previous binary." >&2
   if [[ -f "${BACKUP_BINARY}" ]]; then
-    install -o root -g root -m 0755 "${BACKUP_BINARY}" "${TARGET_BINARY}"
-    systemctl restart "${SERVICE_NAME}" || true
+    rollback
   fi
   exit 1
 fi
@@ -68,8 +77,18 @@ if [[ "${healthy}" != true ]]; then
   systemctl --no-pager --full status "${SERVICE_NAME}" >&2 || true
   journalctl -u "${SERVICE_NAME}" -n 40 --no-pager >&2 || true
   if [[ -f "${BACKUP_BINARY}" ]]; then
-    install -o root -g root -m 0755 "${BACKUP_BINARY}" "${TARGET_BINARY}"
-    systemctl restart "${SERVICE_NAME}" || true
+    rollback
+  fi
+  exit 1
+fi
+
+if ! sqlite3 "${DATABASE_PATH}" \
+  "SELECT 1 FROM sqlite_master WHERE type='table' AND name='api_request_metrics';" \
+  | grep -qx '1'; then
+  echo "New binary started, but api_request_metrics is missing from ${DATABASE_PATH}; restoring the previous binary." >&2
+  journalctl -u "${SERVICE_NAME}" -n 40 --no-pager >&2 || true
+  if [[ -f "${BACKUP_BINARY}" ]]; then
+    rollback
   fi
   exit 1
 fi

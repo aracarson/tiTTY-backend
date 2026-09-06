@@ -34,10 +34,10 @@ aws s3 presign \
 
 
   ##### ALternate version for Powershell
-  aws s3 cp `
-  ./titty-backend-linux-arm64 `
-  s3://identitty/titty-backend-linux-arm64 `
-  --region ca-central-1
+aws s3 cp `
+./titty-backend-linux-arm64 `
+s3://identitty/titty-backend-linux-arm64 `
+--region ca-central-1
 
 ## generate presigned URL
 aws s3 presign `
@@ -67,7 +67,7 @@ sudo bash /opt/titty-backend/update-binary.sh /tmp/titty-backend
 
 ##ON EC2 instance
 sudo install -o root -g root -m 0755 \
-  /path/to/update-binary.sh \
+  /tmp/update-binary.sh \
   /opt/titty-backend/update-binary.sh
 
 ## download new binary
@@ -97,6 +97,9 @@ sudo bash /opt/titty-backend/update-binary.sh /tmp/titty-backend
 
 
 
+## Generate api metrics
+
+sudo bash /opt/titty-backend/bin/generate-api-metrics.sh
 
 
 
@@ -109,5 +112,9 @@ sudo bash /opt/titty-backend/update-binary.sh /tmp/titty-backend
 
 
 
-## for scripts that generate metrics, you can run the following commands to generate and upload metrics reports to S3:
-## 
+
+## to update generate-api-metrics.sh script, run the following command on the EC2 instance:
+
+sudo install -o root -g root -m 0755 \
+  /tmp/generate-api-metrics.sh \
+  /opt/titty-backend/generate-api-metrics.sh

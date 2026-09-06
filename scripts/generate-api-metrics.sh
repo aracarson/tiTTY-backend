@@ -31,6 +31,15 @@ done
 
 install -d -m 0750 "${REPORT_DIR}"
 
+if ! sqlite3 "${DATABASE_PATH}" "SELECT 1 FROM sqlite_master WHERE type='table' AND name='api_request_metrics';" | grep -q '^1$'; then
+  echo "api_request_metrics table is missing from ${DATABASE_PATH}. Deploy the new backend binary so migration 0002 can run." >&2
+  exit 1
+fi
+
+ALL_TIME_REQUESTS="$(sqlite3 "${DATABASE_PATH}" "SELECT COALESCE(SUM(request_count), 0) FROM api_request_metrics;")"
+echo "Metrics database: ${DATABASE_PATH}"
+echo "All-time recorded API requests: ${ALL_TIME_REQUESTS}"
+
 SQL_SINCE="$(date -u -d "${SINCE}" '+%Y-%m-%dT%H:%M:%SZ')"
 sqlite3 -header -csv "${DATABASE_PATH}" \
   "SELECT bucket_start, method, endpoint, request_count, status_class, ROUND(latency_ms_total, 3) AS latency_ms_total FROM api_request_metrics WHERE bucket_start >= '${SQL_SINCE}' ORDER BY bucket_start, endpoint, method, status_class;" \
