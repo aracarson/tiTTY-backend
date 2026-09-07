@@ -47,6 +47,7 @@ pub async fn remove_expired_challenges(pool: &SqlitePool) -> anyhow::Result<()> 
 pub async fn record_api_request(
     pool: &SqlitePool,
     timestamp: DateTime<Utc>,
+    source_ip: &str,
     method: &str,
     endpoint: &str,
     status: u16,
@@ -62,9 +63,10 @@ pub async fn record_api_request(
     let status_class = i64::from(status / 100);
 
     sqlx::query(
-        "INSERT INTO api_request_metrics (bucket_start, method, endpoint, status_class, request_count, latency_ms_total) VALUES (?, ?, ?, ?, 1, ?) ON CONFLICT(bucket_start, method, endpoint, status_class) DO UPDATE SET request_count = request_count + 1, latency_ms_total = latency_ms_total + excluded.latency_ms_total",
+        "INSERT INTO api_request_metrics (bucket_start, source_ip, method, endpoint, status_class, request_count, latency_ms_total) VALUES (?, ?, ?, ?, ?, 1, ?) ON CONFLICT(bucket_start, source_ip, method, endpoint, status_class) DO UPDATE SET request_count = request_count + 1, latency_ms_total = latency_ms_total + excluded.latency_ms_total",
     )
     .bind(bucket_start)
+    .bind(source_ip)
     .bind(method)
     .bind(endpoint)
     .bind(status_class)

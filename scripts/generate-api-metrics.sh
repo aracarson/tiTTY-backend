@@ -42,7 +42,7 @@ echo "All-time recorded API requests: ${ALL_TIME_REQUESTS}"
 
 SQL_SINCE="$(date -u -d "${SINCE}" '+%Y-%m-%dT%H:%M:%SZ')"
 sqlite3 -header -csv "${DATABASE_PATH}" \
-  "SELECT bucket_start, method, endpoint, request_count, status_class, ROUND(latency_ms_total, 3) AS latency_ms_total FROM api_request_metrics WHERE bucket_start >= '${SQL_SINCE}' ORDER BY bucket_start, endpoint, method, status_class;" \
+  "SELECT bucket_start, source_ip, method, endpoint, request_count, status_class, ROUND(latency_ms_total, 3) AS latency_ms_total FROM api_request_metrics WHERE bucket_start >= '${SQL_SINCE}' ORDER BY bucket_start, endpoint, source_ip, method, status_class;" \
   > "${REPORT_DIR}/api-calls-by-15-minutes.csv"
 
 sqlite3 -header -csv "${DATABASE_PATH}" \
@@ -60,6 +60,18 @@ sqlite3 -header -csv "${DATABASE_PATH}" \
 sqlite3 -header -csv "${DATABASE_PATH}" \
   "SELECT status_class || 'xx' AS status_class, SUM(request_count) AS requests FROM api_request_metrics WHERE bucket_start >= '${SQL_SINCE}' GROUP BY status_class ORDER BY status_class;" \
   > "${REPORT_DIR}/status-summary.csv"
+
+sqlite3 -header -csv "${DATABASE_PATH}" \
+  "SELECT source_ip, SUM(request_count) AS requests, COUNT(DISTINCT endpoint) AS endpoints, ROUND(SUM(latency_ms_total), 3) AS latency_ms_total FROM api_request_metrics WHERE bucket_start >= '${SQL_SINCE}' GROUP BY source_ip ORDER BY requests DESC;" \
+  > "${REPORT_DIR}/source-summary.csv"
+
+sqlite3 -header -csv "${DATABASE_PATH}" \
+  "SELECT source_ip, endpoint, SUM(request_count) AS requests FROM api_request_metrics WHERE bucket_start >= '${SQL_SINCE}' GROUP BY source_ip, endpoint ORDER BY requests DESC;" \
+  > "${REPORT_DIR}/source-endpoint-summary.csv"
+
+sqlite3 -header -csv "${DATABASE_PATH}" \
+  "SELECT source_ip, status_class || 'xx' AS status_class, SUM(request_count) AS requests FROM api_request_metrics WHERE bucket_start >= '${SQL_SINCE}' GROUP BY source_ip, status_class ORDER BY requests DESC;" \
+  > "${REPORT_DIR}/source-status-summary.csv"
 
 python3 - "${REPORT_DIR}" "${SINCE}" <<'PY'
 import csv
@@ -79,12 +91,15 @@ rows = read_csv("api-calls-by-15-minutes.csv")
 endpoint_rows = read_csv("endpoint-summary.csv")
 bucket_rows = read_csv("bucket-summary.csv")
 status_rows = read_csv("status-summary.csv")
+source_rows = read_csv("source-summary.csv")
+source_endpoint_rows = read_csv("source-endpoint-summary.csv")
+source_status_rows = read_csv("source-status-summary.csv")
 
 for row in rows:
   row["requests"] = int(row["request_count"])
   row["status_class"] = int(row["status_class"])
   row["latency_ms_total"] = float(row["latency_ms_total"])
-for row in endpoint_rows + bucket_rows + status_rows:
+for row in endpoint_rows + bucket_rows + status_rows + source_rows + source_endpoint_rows + source_status_rows:
   row["requests"] = int(row["requests"])
 
 total_requests = sum(row["requests"] for row in rows)
@@ -95,6 +110,7 @@ summary = {
   "metric_rows": len(rows),
   "endpoint_count": len(endpoint_rows),
   "bucket_count": len(bucket_rows),
+  "source_count": len(source_rows),
 }
 (report_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
 
@@ -113,10 +129,13 @@ html_report = f'''<!doctype html>
 <body><main><h1>API usage dashboard</h1><p class="note">Window: {html.escape(since)}. Source: SQLite aggregate counters. No headers, bodies, tokens, or identity values are included.</p>
 <div class="cards"><div class="card"><span class="value">{total_requests}</span>Total requests</div><div class="card"><span class="value">{len(endpoint_rows)}</span>Endpoints</div><div class="card"><span class="value">{len(bucket_rows)}</span>15-minute buckets</div><div class="card"><span class="value">{len(status_rows)}</span>Status classes</div></div>
 <svg id="chart" viewBox="0 0 1060 420" role="img" aria-label="API calls by endpoint and 15-minute bucket"></svg>
+<h2>Requests by source</h2>{table(["source_ip", "requests", "endpoints", "latency_ms_total"], source_rows)}
 <h2>Requests by endpoint</h2>{table(["endpoint", "requests", "latency_ms_total"], endpoint_rows)}
+<h2>Source and endpoint traffic</h2>{table(["source_ip", "endpoint", "requests"], source_endpoint_rows)}
+<h2>Source and status traffic</h2>{table(["source_ip", "status_class", "requests"], source_status_rows)}
 <h2>Requests by status class</h2>{table(["status_class", "requests"], status_rows)}
 <h2>Requests by 15-minute bucket</h2>{table(["bucket_start", "requests"], bucket_rows)}
-<h2>Detailed metric rows</h2>{table(["bucket_start", "method", "endpoint", "request_count", "status_class", "latency_ms_total"], rows)}
+<h2>Detailed metric rows</h2>{table(["bucket_start", "source_ip", "method", "endpoint", "request_count", "status_class", "latency_ms_total"], rows)}
 <script>
 const data={chart_json}; const svg=document.getElementById('chart'); const W=1060,H=420,p={{t:25,r:20,b:75,l:52}},pw=W-p.l-p.r,ph=H-p.t-p.b;
 const max=Math.max(1,...data.map(d=>d.requests));

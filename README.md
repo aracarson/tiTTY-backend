@@ -204,7 +204,9 @@ sudo bash /opt/titty-backend/bin/generate-api-metrics.sh
 sudo bash /opt/titty-backend/bin/generate-api-metrics.sh "7 days ago"
 ```
 
-The backend records `/graphql` and `/healthz` calls directly into the `api_request_metrics` table in 15-minute UTC buckets, grouped by method, endpoint, and status class. The report writes an HTML histogram, CSV data, and a JSON summary. It uploads to `s3://identitty/reports/api/<timestamp>/` by default and removes local report directories older than 14 days only after the upload succeeds. The EC2 role needs `s3:PutObject` for `arn:aws:s3:::identitty/reports/api/*`.
+The backend records `/graphql` and `/healthz` calls directly into the `api_request_metrics` table in 15-minute UTC buckets, grouped by observed source address, method, endpoint, and status class. The report writes an HTML histogram plus source, endpoint, bucket, status, and detailed CSV/HTML tables. It uploads to `s3://identitty/reports/api/<timestamp>/` by default and removes local report directories older than 14 days only after the upload succeeds. The EC2 role needs `s3:PutObject` for `arn:aws:s3:::identitty/reports/api/*`.
+
+Source addresses come from Caddy's `X-Forwarded-For` or `X-Real-IP` headers. The Rust service is loopback-only, so Caddy is the only intended caller. Do not expose port `8080` directly; otherwise clients could spoof forwarding headers. Review the privacy and retention implications before sharing source-address reports.
 
 ## Important production work
 

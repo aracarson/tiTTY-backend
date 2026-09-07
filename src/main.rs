@@ -136,6 +136,7 @@ async fn api_access_log(
 ) -> Response {
     let method = request.method().clone();
     let endpoint = request.uri().path().to_owned();
+    let source_ip = request_source(request.headers());
     let request_id = request
         .headers()
         .get("x-request-id")
@@ -149,6 +150,7 @@ async fn api_access_log(
         target: "api_access",
         Level::INFO,
         event = "api_request",
+        source_ip = %source_ip,
         method = %method,
         endpoint = %endpoint,
         status = response.status().as_u16(),
@@ -159,6 +161,7 @@ async fn api_access_log(
     if let Err(error) = db::record_api_request(
         &state.pool,
         Utc::now(),
+        &source_ip,
         method.as_str(),
         &endpoint,
         response.status().as_u16(),
@@ -220,6 +223,18 @@ fn client_key(headers: &HeaderMap) -> String {
                 .get("x-real-ip")
                 .and_then(|value| value.to_str().ok())
         })
+        .unwrap_or("unknown")
+        .to_owned()
+}
+
+fn request_source(headers: &HeaderMap) -> String {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| headers.get("x-real-ip").and_then(|value| value.to_str().ok()))
         .unwrap_or("unknown")
         .to_owned()
 }
