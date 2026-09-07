@@ -49,48 +49,80 @@ sqlite3 -header -csv "${DATABASE_PATH}" \
   "SELECT COALESCE(SUM(request_count), 0) AS total_requests, COUNT(DISTINCT bucket_start) AS buckets, MIN(bucket_start) AS first_bucket, MAX(bucket_start) AS latest_bucket FROM api_request_metrics WHERE bucket_start >= '${SQL_SINCE}';" \
   > "${REPORT_DIR}/summary.csv"
 
-python3 - "${REPORT_DIR}/api-calls-by-15-minutes.csv" "${REPORT_DIR}" "${SINCE}" <<'PY'
+sqlite3 -header -csv "${DATABASE_PATH}" \
+  "SELECT endpoint, SUM(request_count) AS requests, ROUND(SUM(latency_ms_total), 3) AS latency_ms_total FROM api_request_metrics WHERE bucket_start >= '${SQL_SINCE}' GROUP BY endpoint ORDER BY requests DESC;" \
+  > "${REPORT_DIR}/endpoint-summary.csv"
+
+sqlite3 -header -csv "${DATABASE_PATH}" \
+  "SELECT bucket_start, SUM(request_count) AS requests FROM api_request_metrics WHERE bucket_start >= '${SQL_SINCE}' GROUP BY bucket_start ORDER BY bucket_start;" \
+  > "${REPORT_DIR}/bucket-summary.csv"
+
+sqlite3 -header -csv "${DATABASE_PATH}" \
+  "SELECT status_class || 'xx' AS status_class, SUM(request_count) AS requests FROM api_request_metrics WHERE bucket_start >= '${SQL_SINCE}' GROUP BY status_class ORDER BY status_class;" \
+  > "${REPORT_DIR}/status-summary.csv"
+
+python3 - "${REPORT_DIR}" "${SINCE}" <<'PY'
 import csv
 import html
 import json
 import sys
 from pathlib import Path
 
-csv_path = Path(sys.argv[1])
-report_dir = Path(sys.argv[2])
-since = sys.argv[3]
-rows = []
-with csv_path.open(newline="") as source:
-    for row in csv.DictReader(source):
-        rows.append({
-            "bucket": row["bucket_start"],
-            "method": row["method"],
-            "endpoint": row["endpoint"],
-            "status_class": int(row["status_class"]),
-            "requests": int(row["request_count"]),
-            "latency_ms_total": float(row["latency_ms_total"]),
-        })
+report_dir = Path(sys.argv[1])
+since = sys.argv[2]
 
-(report_dir / "summary.json").write_text(json.dumps({
-    "since": since,
-    "generated_utc": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
-    "total_requests": sum(row["requests"] for row in rows),
-    "metric_rows": len(rows),
-}, indent=2) + "\n")
+def read_csv(name):
+  with (report_dir / name).open(newline="") as source:
+    return list(csv.DictReader(source))
 
-chart_json = json.dumps(rows, separators=(",", ":"))
+rows = read_csv("api-calls-by-15-minutes.csv")
+endpoint_rows = read_csv("endpoint-summary.csv")
+bucket_rows = read_csv("bucket-summary.csv")
+status_rows = read_csv("status-summary.csv")
+
+for row in rows:
+  row["requests"] = int(row["request_count"])
+  row["status_class"] = int(row["status_class"])
+  row["latency_ms_total"] = float(row["latency_ms_total"])
+for row in endpoint_rows + bucket_rows + status_rows:
+  row["requests"] = int(row["requests"])
+
+total_requests = sum(row["requests"] for row in rows)
+summary = {
+  "since": since,
+  "generated_utc": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+  "total_requests": total_requests,
+  "metric_rows": len(rows),
+  "endpoint_count": len(endpoint_rows),
+  "bucket_count": len(bucket_rows),
+}
+(report_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+
+def table(headers, records):
+  head = "".join(f"<th>{html.escape(header)}</th>" for header in headers)
+  body = "".join("<tr>" + "".join(f"<td>{html.escape(str(record.get(header, '')))}</td>" for header in headers) + "</tr>" for record in records)
+  if not body:
+    body = f'<tr><td colspan="{len(headers)}" class="empty">No data in this window</td></tr>'
+  return f"<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
+
+chart_json = json.dumps([{"bucket": row["bucket_start"], "requests": row["requests"]} for row in bucket_rows], separators=(",", ":"))
 html_report = f'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>tiTTY API calls</title>
-<style>body{{font:16px system-ui,sans-serif;max-width:1100px;margin:2rem auto;padding:0 1rem;color:#18212b;background:#f5f7f9}}main{{background:#fff;border:1px solid #d9e0e7;border-radius:8px;padding:1.5rem}}h1{{font-size:1.4rem}}svg{{width:100%;height:420px;border:1px solid #d9e0e7;background:#fbfcfd}}.bar{{opacity:.85}}.label{{font:10px system-ui,sans-serif;fill:#334e68}}.note{{color:#52606d}}</style></head>
-<body><main><h1>API calls by 15-minute UTC bucket</h1><p class="note">Window: {html.escape(since)}. Data comes from SQLite request counters; no headers, bodies, tokens, or identity values are included.</p>
+<style>body{{font:16px system-ui,sans-serif;max-width:1200px;margin:2rem auto;padding:0 1rem;color:#18212b;background:#f5f7f9}}main{{background:#fff;border:1px solid #d9e0e7;border-radius:8px;padding:1.5rem}}h1{{font-size:1.5rem}}h2{{font-size:1.05rem;margin-top:2rem;border-bottom:1px solid #d9e0e7;padding-bottom:.5rem}}.note,.empty{{color:#52606d}}.cards{{display:flex;gap:1rem;flex-wrap:wrap}}.card{{background:#edf2f7;border-radius:6px;padding:1rem;min-width:150px}}.value{{display:block;font-size:1.7rem;font-weight:700}}table{{width:100%;border-collapse:collapse;margin-top:1rem;font-size:.92rem}}th,td{{padding:.55rem;border-bottom:1px solid #e2e8f0;text-align:left}}th{{background:#f7fafc}}svg{{width:100%;height:360px;border:1px solid #d9e0e7;background:#fbfcfd}}.bar{{fill:#276749}}.label{{font:10px system-ui,sans-serif;fill:#334e68}}</style></head>
+<body><main><h1>API usage dashboard</h1><p class="note">Window: {html.escape(since)}. Source: SQLite aggregate counters. No headers, bodies, tokens, or identity values are included.</p>
+<div class="cards"><div class="card"><span class="value">{total_requests}</span>Total requests</div><div class="card"><span class="value">{len(endpoint_rows)}</span>Endpoints</div><div class="card"><span class="value">{len(bucket_rows)}</span>15-minute buckets</div><div class="card"><span class="value">{len(status_rows)}</span>Status classes</div></div>
 <svg id="chart" viewBox="0 0 1060 420" role="img" aria-label="API calls by endpoint and 15-minute bucket"></svg>
+<h2>Requests by endpoint</h2>{table(["endpoint", "requests", "latency_ms_total"], endpoint_rows)}
+<h2>Requests by status class</h2>{table(["status_class", "requests"], status_rows)}
+<h2>Requests by 15-minute bucket</h2>{table(["bucket_start", "requests"], bucket_rows)}
+<h2>Detailed metric rows</h2>{table(["bucket_start", "method", "endpoint", "request_count", "status_class", "latency_ms_total"], rows)}
 <script>
 const data={chart_json}; const svg=document.getElementById('chart'); const W=1060,H=420,p={{t:25,r:20,b:75,l:52}},pw=W-p.l-p.r,ph=H-p.t-p.b;
-const max=Math.max(1,...data.map(d=>d.requests)); const colors={{'/graphql':'#276749','/healthz':'#2b6cb0'}};
+const max=Math.max(1,...data.map(d=>d.requests));
 if(!data.length){{svg.innerHTML='<text x="530" y="210" text-anchor="middle" class="label">No API counters found in this time window</text>';}}
 const barW=data.length?Math.max(2,pw/data.length-2):pw;
-data.forEach((d,i)=>{{const x=p.l+i*(pw/data.length)+1,h=d.requests/max*ph,y=p.t+ph-h;const r=document.createElementNS('http://www.w3.org/2000/svg','rect');r.setAttribute('class','bar');r.setAttribute('x',x);r.setAttribute('y',y);r.setAttribute('width',barW);r.setAttribute('height',h);r.setAttribute('fill',colors[d.endpoint]||'#718096');r.setAttribute('title',`${{d.bucket}} ${{d.method}} ${{d.endpoint}} status ${{d.status_class}}xx: ${{d.requests}}`);svg.appendChild(r);if(data.length<=24||i%Math.ceil(data.length/24)===0){{const t=document.createElementNS('http://www.w3.org/2000/svg','text');t.setAttribute('class','label');t.setAttribute('x',x);t.setAttribute('y',H-28);t.textContent=d.bucket.slice(11,16);svg.appendChild(t);}}}});
+data.forEach((d,i)=>{{const x=p.l+i*(pw/data.length)+1,h=d.requests/max*ph,y=p.t+ph-h;const r=document.createElementNS('http://www.w3.org/2000/svg','rect');r.setAttribute('class','bar');r.setAttribute('x',x);r.setAttribute('y',y);r.setAttribute('width',barW);r.setAttribute('height',h);r.setAttribute('title',`${{d.bucket}}: ${{d.requests}} requests`);svg.appendChild(r);if(data.length<=24||i%Math.ceil(data.length/24)===0){{const t=document.createElementNS('http://www.w3.org/2000/svg','text');t.setAttribute('class','label');t.setAttribute('x',x);t.setAttribute('y',H-28);t.textContent=d.bucket.slice(11,16);svg.appendChild(t);}}}});
 </script></main></body></html>'''
 (report_dir / "index.html").write_text(html_report)
 PY
