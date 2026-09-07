@@ -8,12 +8,15 @@ mod models;
 mod rate_limit;
 mod validation;
 
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::Context;
 use async_graphql::Request as GraphQLRequestData;
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
-use chrono::Utc;
 use axum::{
     extract::{DefaultBodyLimit, State},
     http::{header, HeaderMap, HeaderValue, Method, StatusCode},
@@ -22,6 +25,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use chrono::Utc;
 use config::Config;
 use graphql::{build_schema, AppSchema};
 use tower_http::{
@@ -48,8 +52,8 @@ struct AppState {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
-    let api_log_dir = std::env::var("TITTY_API_LOG_DIR")
-        .unwrap_or_else(|_| "/var/log/titty-backend".to_owned());
+    let api_log_dir =
+        std::env::var("TITTY_API_LOG_DIR").unwrap_or_else(|_| "/var/log/titty-backend".to_owned());
     std::fs::create_dir_all(&api_log_dir)
         .with_context(|| format!("could not create API log directory {api_log_dir}"))?;
     let api_log = tracing_appender::rolling::daily(&api_log_dir, "api-access.jsonl");
@@ -107,7 +111,10 @@ async fn main() -> anyhow::Result<()> {
         ))
         .layer(TraceLayer::new_for_http())
         .layer(cors)
-        .layer(middleware::from_fn_with_state(state.clone(), api_access_log))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            api_access_log,
+        ))
         .with_state(state);
 
     let address: SocketAddr = config
@@ -212,19 +219,7 @@ async fn graphql_handler(
 }
 
 fn client_key(headers: &HeaderMap) -> String {
-    headers
-        .get("x-forwarded-for")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.split(',').next())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .or_else(|| {
-            headers
-                .get("x-real-ip")
-                .and_then(|value| value.to_str().ok())
-        })
-        .unwrap_or("unknown")
-        .to_owned()
+    request_source(headers)
 }
 
 fn request_source(headers: &HeaderMap) -> String {
@@ -232,11 +227,48 @@ fn request_source(headers: &HeaderMap) -> String {
         .get("x-forwarded-for")
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.split(',').next())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .or_else(|| headers.get("x-real-ip").and_then(|value| value.to_str().ok()))
-        .unwrap_or("unknown")
-        .to_owned()
+        .or_else(|| {
+            headers
+                .get("x-real-ip")
+                .and_then(|value| value.to_str().ok())
+        })
+        .and_then(normalize_ip)
+        .unwrap_or_else(|| "unknown".to_owned())
+}
+
+fn normalize_ip(value: &str) -> Option<String> {
+    value
+        .trim()
+        .parse::<IpAddr>()
+        .ok()
+        .map(|address| address.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::request_source;
+    use axum::http::{HeaderMap, HeaderValue};
+
+    #[test]
+    fn normalizes_ipv4_and_ipv6_sources() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", HeaderValue::from_static(" 192.0.2.7 "));
+        assert_eq!(request_source(&headers), "192.0.2.7");
+
+        headers.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("2001:0db8:0:0:0:0:0:1"),
+        );
+        assert_eq!(request_source(&headers), "2001:db8::1");
+    }
+
+    #[test]
+    fn rejects_invalid_forwarding_values() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", HeaderValue::from_static("not-an-ip"));
+        headers.insert("x-real-ip", HeaderValue::from_static("also-not-an-ip"));
+        assert_eq!(request_source(&headers), "unknown");
+    }
 }
 
 async fn shutdown_signal() {
