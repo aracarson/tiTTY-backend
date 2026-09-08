@@ -12,6 +12,8 @@
 https://iden.titty.app {
     coraza_waf {
         include /etc/caddy/coraza/coraza.conf
+        include /etc/caddy/coraza/crs-setup.conf
+        include /etc/caddy/coraza/rules/*.conf
     }
 
     encode zstd gzip

@@ -28,19 +28,31 @@ rm -f /tmp/caddy-coraza
 echo "Verifying loaded modules:"
 /usr/local/bin/caddy list-modules | grep -E 'coraza|route53'
 
-echo "3. Creating Coraza configuration..."
-install -d -o root -g caddy -m 0750 "${CORAZA_DIR}"
+echo "3. Creating Coraza configuration & OWASP Core Rule Set (CRS)..."
+install -d -o root -g caddy -m 0750 "${CORAZA_DIR}" "${CORAZA_DIR}/rules"
 
-# Download recommended Coraza base rules
+# Download recommended Coraza engine config
 curl -fsSL https://raw.githubusercontent.com/corazawaf/coraza/main/coraza.conf-recommended \
   -o "${CORAZA_DIR}/coraza.conf"
 
 # Enable active blocking mode
 sed -i 's/SecRuleEngine DetectionOnly/SecRuleEngine On/' "${CORAZA_DIR}/coraza.conf"
 
-# Ensure caddy user can read the rules
+# Download official OWASP Core Rule Set (CRS) v4
+echo "Downloading OWASP Core Rule Set..."
+CRS_TEMP=$(mktemp -d)
+curl -fsSL https://github.com/coreruleset/coreruleset/archive/refs/tags/v4.10.0.tar.gz \
+  -o "${CRS_TEMP}/crs.tar.gz"
+
+tar -xzf "${CRS_TEMP}/crs.tar.gz" -C "${CRS_TEMP}"
+cp "${CRS_TEMP}"/coreruleset-*/crs-setup.conf.example "${CORAZA_DIR}/crs-setup.conf"
+cp -r "${CRS_TEMP}"/coreruleset-*/rules/* "${CORAZA_DIR}/rules/"
+rm -rf "${CRS_TEMP}"
+
+# Ensure caddy user can read all rules and directories
 chown -R root:caddy "${CORAZA_DIR}"
-chmod 0640 "${CORAZA_DIR}"/*.conf
+chmod 0750 "${CORAZA_DIR}" "${CORAZA_DIR}/rules"
+chmod 0640 "${CORAZA_DIR}"/*.conf "${CORAZA_DIR}"/rules/*.conf
 
 echo "4. Updating /etc/caddy/Caddyfile..."
 cat > /etc/caddy/Caddyfile <<EOF
@@ -52,6 +64,8 @@ cat > /etc/caddy/Caddyfile <<EOF
 https://${DOMAIN} {
     coraza_waf {
         include ${CORAZA_DIR}/coraza.conf
+        include ${CORAZA_DIR}/crs-setup.conf
+        include ${CORAZA_DIR}/rules/*.conf
     }
 
     encode zstd gzip
