@@ -3,12 +3,23 @@
     # [x] Serve only HTTPS
     # [x] Do not start an HTTP redirect listener
     # [x] Keep Axum private on loopback
+    # [x] Run OWASP Coraza WAF before reverse proxy
     auto_https disable_redirects
+    order coraza_waf first
 }
 
 # Replace iden.titty.app before deployment.
 https://iden.titty.app {
+    coraza_waf {
+        include /etc/caddy/coraza/coraza.conf
+    }
+
     encode zstd gzip
+
+    tls {
+        dns route53
+    }
+
     reverse_proxy 127.0.0.1:8080
 
     request_body {
