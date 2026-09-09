@@ -58,7 +58,7 @@ curl -fL 'PASTE_PRESIGNED_URL_HERE' -o /tmp/titty-backend
 
 sudo bash /opt/titty-backend/update-binary.sh /tmp/titty-backend
 
-
+sudo bash /opt/titty-backend/update-binary.sh /tmp/titty-backend-linux-arm64
 
 
 ## OR if the binary is already on the instance:
@@ -226,3 +226,17 @@ sh ./reports/getreports.sh
 python -m http.server 8000 --directory ./reports/api-metrics
 
 http://127.0.0.1:8000/api-source-map.html
+
+
+
+
+
+
+
+
+
+
+
+aws ssm start-session `                                                           
+--target i-0d8718786fb333253 `          
+--region ca-central-1  

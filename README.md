@@ -155,6 +155,22 @@ The client private Ed25519 key never crosses the API boundary. The client signs 
 
 The Rust service writes one JSON access event per HTTP request to daily-rotated files under `/var/log/titty-backend/`. Each event contains the method, endpoint, status, latency, and request ID. Request headers, bodies, JWTs, public keys, AccountIDs, and identiTTY values are not written.
 
+For short-lived private troubleshooting, full GraphQL POST bodies can be enabled with `TITTY_LOG_GRAPHQL_BODY=true` in the systemd environment file. The middleware buffers and restores only `/graphql` request bodies, then writes a separate `graphql_request_body` event to the API access log. Disable it and restart the service immediately after troubleshooting because bodies may contain JWT-adjacent data, account identifiers, encrypted payloads, signatures, or other sensitive client values:
+
+```bash
+sudoedit /etc/titty-backend/titty-backend.env
+# add: TITTY_LOG_GRAPHQL_BODY=true
+sudo systemctl restart titty-backend
+sudo grep '"event":"graphql_request_body"' /var/log/titty-backend/api-access.jsonl
+```
+
+Disable body logging when finished:
+
+```bash
+sudo sed -i '/^TITTY_LOG_GRAPHQL_BODY=/d' /etc/titty-backend/titty-backend.env
+sudo systemctl restart titty-backend
+```
+
 Install the logging cleanup service on the EC2 host after deploying a binary that includes the logging layer:
 
 ```bash

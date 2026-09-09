@@ -18,6 +18,7 @@ use anyhow::Context;
 use async_graphql::Request as GraphQLRequestData;
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{
+    body::{to_bytes, Body},
     extract::{DefaultBodyLimit, State},
     http::{header, HeaderMap, HeaderValue, Method, StatusCode},
     middleware,
@@ -150,11 +151,12 @@ async fn main() -> anyhow::Result<()> {
 
 async fn api_access_log(
     State(state): State<AppState>,
-    request: axum::http::Request<axum::body::Body>,
+    mut request: axum::http::Request<axum::body::Body>,
     next: middleware::Next,
 ) -> Response {
     let method = request.method().clone();
     let endpoint = request.uri().path().to_owned();
+    let request_url = request_url(request.headers(), request.uri());
     let source_ip = request_source(request.headers());
     let request_id = request
         .headers()
@@ -162,6 +164,21 @@ async fn api_access_log(
         .and_then(|value| value.to_str().ok())
         .unwrap_or("unknown")
         .to_owned();
+    let graphql_body = if state.config.log_graphql_body && endpoint == "/graphql" {
+        let (parts, body) = request.into_parts();
+        let body = match to_bytes(body, state.config.max_body_bytes).await {
+            Ok(body) => body,
+            Err(error) => {
+                tracing::warn!(%error, request_id = %request_id, "could not buffer GraphQL request body");
+                return (StatusCode::BAD_REQUEST, "invalid request body").into_response();
+            }
+        };
+        let body_text = String::from_utf8_lossy(&body).into_owned();
+        request = axum::http::Request::from_parts(parts, Body::from(body.clone()));
+        Some(body_text)
+    } else {
+        None
+    };
     let started = std::time::Instant::now();
     let response = next.run(request).await;
 
@@ -172,6 +189,7 @@ async fn api_access_log(
         source_ip = %source_ip,
         method = %method,
         endpoint = %endpoint,
+        request_url = %request_url,
         status = response.status().as_u16(),
         latency_ms = started.elapsed().as_secs_f64() * 1000.0,
         request_id = %request_id,
@@ -191,7 +209,33 @@ async fn api_access_log(
         tracing::warn!(%error, "could not record API request metrics");
     }
 
+    if let Some(body) = graphql_body {
+        event!(
+            target: "api_access",
+            Level::INFO,
+            event = "graphql_request_body",
+            request_id = %request_id,
+            request_url = %request_url,
+            body = %body,
+        );
+    }
+
     response
+}
+
+fn request_url(headers: &HeaderMap, uri: &axum::http::Uri) -> String {
+    let host = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("unknown");
+    let scheme = headers
+        .get("x-forwarded-proto")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .map(str::trim)
+        .filter(|value| *value == "http" || *value == "https")
+        .unwrap_or("http");
+    format!("{scheme}://{host}{uri}")
 }
 
 async fn health() -> impl IntoResponse {

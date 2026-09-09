@@ -97,6 +97,7 @@ mod tests {
             session_ttl_seconds: 3600,
             challenge_ttl_seconds: 180,
             max_body_bytes: 65_536,
+            log_graphql_body: false,
             allowed_origin: "https://example.com".into(),
         }
     }

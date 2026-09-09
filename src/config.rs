@@ -12,6 +12,7 @@ pub struct Config {
     pub session_ttl_seconds: i64,
     pub challenge_ttl_seconds: i64,
     pub max_body_bytes: usize,
+    pub log_graphql_body: bool,
     pub allowed_origin: String,
 }
 
@@ -30,6 +31,7 @@ impl Config {
             session_ttl_seconds: parse("TITTY_SESSION_TTL_SECONDS", 3600)?,
             challenge_ttl_seconds: parse("TITTY_CHALLENGE_TTL_SECONDS", 180)?,
             max_body_bytes: parse("TITTY_MAX_BODY_BYTES", 65_536)?,
+            log_graphql_body: parse("TITTY_LOG_GRAPHQL_BODY", false)?,
             allowed_origin: required("TITTY_ALLOWED_ORIGIN")?,
         })
     }
