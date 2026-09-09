@@ -22,6 +22,14 @@ pub enum ApiError {
     Unauthorized,
     #[error("Too many requests")]
     RateLimited,
+    #[error("The encrypted payload is invalid or too large")]
+    InvalidPayload,
+    #[error("The request limit has been reached")]
+    ActiveRequestLimit,
+    #[error("The chat request is invalid or expired")]
+    InvalidChatRequest,
+    #[error("The account cannot block itself")]
+    SelfBlock,
     #[error("An internal service error occurred")]
     Internal,
 }
@@ -37,6 +45,10 @@ impl ErrorExtensions for ApiError {
             Self::AuthenticationFailed => "AUTHENTICATION_FAILED",
             Self::Unauthorized => "UNAUTHORIZED",
             Self::RateLimited => "RATE_LIMITED",
+            Self::InvalidPayload => "INVALID_PAYLOAD",
+            Self::ActiveRequestLimit => "ACTIVE_REQUEST_LIMIT",
+            Self::InvalidChatRequest => "INVALID_CHAT_REQUEST",
+            Self::SelfBlock => "SELF_BLOCK",
             Self::Internal => "INTERNAL_ERROR",
         };
         Error::new(self.to_string()).extend_with(|_, extensions| {

@@ -1,5 +1,6 @@
 scalar DateTime
 scalar UUID
+scalar Base64
 
 type AccountIdentity {
   accountID: String!
@@ -31,14 +32,75 @@ type AuthenticationSession {
   expiresAt: DateTime!
 }
 
+type BlockedIdentity {
+  accountID: ID!
+  identiTTY: String!
+  blockedAt: DateTime!
+}
+
+type LiveChatRequest {
+  requestID: UUID!
+  senderAccountID: ID!
+  senderIdentiTTY: String!
+  senderPublicKey: Base64!
+  encryptedPayload: Base64!
+  createdAt: DateTime!
+  expiresAt: DateTime!
+}
+
+type LiveChatRequestSubmission {
+  requestID: UUID!
+  accepted: Boolean!
+  leaseID: UUID!
+  leaseExpiresAt: DateTime!
+}
+
+type LiveChatRequestLease {
+  requestID: UUID!
+  leaseID: UUID!
+  expiresAt: DateTime!
+}
+
+input SendLiveChatRequestInput {
+  recipientIdentiTTY: String!
+  clientRequestID: UUID!
+  encryptedPayload: Base64!
+}
+
+input RenewLiveChatRequestInput {
+  requestID: UUID!
+  leaseID: UUID!
+}
+
+input CancelLiveChatRequestInput {
+  requestID: UUID!
+  leaseID: UUID!
+}
+
+input BlockIdentityInput {
+  identiTTY: String!
+}
+
+input UnblockIdentityInput {
+  accountID: ID!
+}
+
 type Query {
   isIdentiTTYAvailable(identiTTY: String!): Boolean!
   account(identiTTY: String!): AccountIdentity
   accountByID(accountID: String!): AccountIdentity
+  me: AccountIdentity
+  blockedIdentities: [BlockedIdentity!]!
+  liveChatRequests: [LiveChatRequest!]!
 }
 
 type Mutation {
   registerAccount(input: RegisterAccountInput!): AccountIdentity!
   requestChallenge(accountID: String!): AuthenticationChallenge!
   authenticate(input: AuthenticateInput!): AuthenticationSession!
+  sendLiveChatRequest(input: SendLiveChatRequestInput!): LiveChatRequestSubmission!
+  renewLiveChatRequest(input: RenewLiveChatRequestInput!): LiveChatRequestLease!
+  cancelLiveChatRequest(input: CancelLiveChatRequestInput!): Boolean!
+  blockIdentity(input: BlockIdentityInput!): BlockedIdentity!
+  unblockIdentity(input: UnblockIdentityInput!): Boolean!
 }

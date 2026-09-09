@@ -80,6 +80,18 @@ async fn main() -> anyhow::Result<()> {
     db::migrate(&pool).await?;
     db::apply_runtime_pragmas(&pool).await?;
     db::remove_expired_challenges(&pool).await?;
+    db::remove_expired_live_chat_requests(&pool).await?;
+
+    let cleanup_pool = pool.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            if let Err(error) = db::remove_expired_live_chat_requests(&cleanup_pool).await {
+                tracing::warn!(%error, "could not clean up expired live-chat requests");
+            }
+        }
+    });
 
     let rate_limiter = Arc::new(rate_limit::RateLimiter::default());
     let schema = build_schema(pool.clone(), config.clone(), rate_limiter.clone());

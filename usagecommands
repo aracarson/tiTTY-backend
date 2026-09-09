@@ -110,9 +110,10 @@ aws s3 presign `
   --expires-in 3600 `
   --region ca-central-1
 
+### RUN THIS
+curl -fL 'PRESIGNED_URL' -o /tmp/generate-api-metrics.sh
 
-
-run the following command on the EC2 instance:
+### then run the following command on the EC2 instance:
 
 sudo install -o root -g root -m 0755 \
   /tmp/generate-api-metrics.sh \
@@ -121,6 +122,57 @@ sudo install -o root -g root -m 0755 \
 ## Generate api metrics -- run script -- output in s3://identitty/reports/api/YYYYMMDDTHHMMSSZ/
 
 sudo bash /opt/titty-backend/generate-api-metrics.sh
+
+## Open the private source map report locally. Do not double-click the HTML
+## from a file:// URL: OpenStreetMap requires an HTTP Referer for tile usage.
+## Download the report directory from S3 first, replacing REPORT_TIMESTAMP:
+
+aws s3 cp `
+  s3://identitty/reports/api/REPORT_TIMESTAMP/ `
+  .\api-report `
+  --recursive `
+  --region ca-central-1
+
+## From the directory containing .\api-report, start a local web server:
+python -m http.server 8000 --directory .\api-report
+
+## Then open this URL in your browser:
+http://127.0.0.1:8000/api-source-map.html
+
+## Copy HTML files from the newest API report folder into .\reports
+## The generator uploads to s3://identitty/reports/api/<timestamp>/.
+
+$latestApiReport = aws s3api list-objects-v2 `
+  --bucket identitty `
+  --prefix reports/api/ `
+  --delimiter / `
+  --query 'CommonPrefixes[].Prefix' `
+  --output text | `
+  ForEach-Object { $_ -split '\s+' } | `
+  Where-Object { $_ -match '^reports/api/\d{8}T\d{6}Z/$' } | `
+  Sort-Object | `
+  Select-Object -Last 1
+
+if (-not $latestApiReport) {
+  throw 'No timestamped API report folder was found in s3://identitty/reports/api/'
+}
+
+New-Item -ItemType Directory -Force .\reports | Out-Null
+aws s3 cp `
+  "s3://identitty/$latestApiReport" `
+  .\reports\api-metrics `
+  --recursive `
+  --exclude '*' `
+  --include '*.html' `
+  --region ca-central-1
+
+Write-Host "Copied HTML files from s3://identitty/$latestApiReport to .\reports"
+
+## Equivalent Bash script from the repository root or reports directory:
+bash ./reports/getreports.sh
+
+## Serve the downloaded HTML files locally:
+python -m http.server 8000 --directory ./reports/api-metrics
 
 
 ## Setup OWASP Coraza WAF in Caddy
@@ -151,3 +203,24 @@ aws s3 presign `
 
 
 
+
+
+
+
+
+
+
+
+
+##### REPORTS
+
+bash ./reports/getreports.sh
+(
+or open git bash and run:
+sh ./reports/getreports.sh
+)
+
+
+python -m http.server 8000 --directory ./reports/api-metrics
+
+http://127.0.0.1:8000/api-source-map.html

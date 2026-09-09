@@ -11,9 +11,11 @@
 # Replace iden.titty.app before deployment.
 https://iden.titty.app {
     coraza_waf {
-        include /etc/caddy/coraza/coraza.conf
-        include /etc/caddy/coraza/crs-setup.conf
-        include /etc/caddy/coraza/rules/*.conf
+        directives `
+            Include /etc/caddy/coraza/coraza.conf
+            Include /etc/caddy/coraza/crs-setup.conf
+            Include /etc/caddy/coraza/rules/*.conf
+        `
     }
 
     encode zstd gzip

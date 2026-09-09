@@ -132,6 +132,21 @@ The public GraphQL operations are:
 
 The `me` query requires an `Authorization: Bearer <JWT>` header. The service validates the JWT signature, issuer and expiry before making the authenticated account available to resolvers.
 
+## Direct chat rendezvous
+
+The GraphQL API also provides temporary direct-chat rendezvous operations:
+
+- `sendLiveChatRequest` accepts a Base64 encrypted payload up to 16 KiB and returns a sender lease.
+- `renewLiveChatRequest` renews a sender lease for up to 90 seconds, never beyond the 15-minute hard expiry.
+- `cancelLiveChatRequest` is idempotent for the owning sender.
+- `liveChatRequests` returns only currently active requests addressed to the authenticated account.
+- `blockIdentity` and `unblockIdentity` maintain recipient-owned block relationships.
+- Blocking removes active requests from the blocked sender to the blocker.
+
+Every direct-chat operation requires a bearer JWT. Sender identity, public key, and block ownership are derived from the authenticated JWT subject; client-provided account IDs are not trusted for authorization. Unknown, unavailable, and blocked recipients receive the same successful-looking send response. The backend stores only the encrypted payload and rendezvous metadata, never messages, contacts, or conversations. SQLite stores the transient records in this deployment; they expire after a 90-second lease or 15-minute hard lifetime and are cleaned at startup and every minute.
+
+The direct-chat migration is embedded in the binary and runs automatically on service startup. Deploy the updated ARM64 binary before using these operations. The current automated test suite covers existing authentication, rate limiting, and source normalization; lifecycle, blocking, and privacy behavior still need GraphQL integration tests before treating this feature as production-complete.
+
 Registration, challenge requests and authentication attempts have per-client rate limits, and the GraphQL endpoint has a global per-client request limit. These limits are process-local and reset when the service restarts; use a shared edge limiter or distributed store when running multiple instances.
 
 The client private Ed25519 key never crosses the API boundary. The client signs the server-provided challenge locally, and the backend verifies the signature against the stored public key.
@@ -205,6 +220,36 @@ sudo bash /opt/titty-backend/bin/generate-api-metrics.sh "7 days ago"
 ```
 
 The backend records `/graphql` and `/healthz` calls directly into the `api_request_metrics` table in 15-minute UTC buckets, grouped by observed source address, method, endpoint, and status class. The report writes an HTML histogram plus source, endpoint, bucket, status, and detailed CSV/HTML tables. It uploads to `s3://identitty/reports/api/<timestamp>/` by default and removes local report directories older than 14 days only after the upload succeeds. The EC2 role needs `s3:PutObject` for `arn:aws:s3:::identitty/reports/api/*`.
+
+The source map report uses a local GeoLite2 City database. Install the updater and store the MaxMind credentials in a root-only file; do not put them in a shell command, URL, or ordinary application environment file:
+
+```bash
+sudo install -o root -g root -m 0755 scripts/update-geolite-db.sh /opt/titty-backend/bin/update-geolite-db.sh
+sudo install -d -o root -g root -m 0750 /etc/titty-backend
+sudo install -o root -g root -m 0600 /dev/null /etc/titty-backend/maxmind.env
+sudoedit /etc/titty-backend/maxmind.env
+```
+
+Put only these two lines in that file:
+
+```text
+MAXMIND_ACCOUNT_ID=your_account_id
+MAXMIND_LICENSE_KEY=your_license_key
+```
+
+Then run and enable the weekly updater:
+
+```bash
+sudo /opt/titty-backend/bin/update-geolite-db.sh
+sudo install -o root -g root -m 0644 systemd/titty-backend-geolite-update.service /etc/systemd/system/titty-backend-geolite-update.service
+sudo install -o root -g root -m 0644 systemd/titty-backend-geolite-update.timer /etc/systemd/system/titty-backend-geolite-update.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now titty-backend-geolite-update.timer
+sudo systemctl start titty-backend-geolite-update.service
+sudo systemctl --no-pager status titty-backend-geolite-update.timer
+```
+
+The updater downloads GeoLite2 into a temporary directory, atomically replaces `/var/lib/GeoIP/GeoLite2-City.mmdb`, and never places the credentials in curl arguments. Keep the MaxMind account and license key private and follow MaxMind's current GeoLite2 license and attribution requirements.
 
 Source addresses come from Caddy's `X-Forwarded-For` or `X-Real-IP` headers. The Rust service is loopback-only, so Caddy is the only intended caller. Do not expose port `8080` directly; otherwise clients could spoof forwarding headers. Review the privacy and retention implications before sharing source-address reports.
 

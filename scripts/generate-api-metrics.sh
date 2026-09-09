@@ -15,6 +15,7 @@ SINCE="${1:-24 hours ago}"
 DATABASE_PATH="${TITTY_DATABASE_PATH:-/var/lib/titty-backend/identity.db}"
 OUTPUT_DIR="${TITTY_API_METRICS_DIR:-/var/lib/titty-backend/api-metrics}"
 S3_ROOT="${TITTY_REPORTS_S3_URI:-s3://identitty/reports}"
+GEOIP_DATABASE_PATH="${TITTY_GEOIP_DATABASE_PATH:-/var/lib/GeoIP/GeoLite2-City.mmdb}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 REPORT_DIR="${OUTPUT_DIR}/${STAMP}"
 
@@ -73,15 +74,24 @@ sqlite3 -header -csv "${DATABASE_PATH}" \
   "SELECT source_ip, status_class || 'xx' AS status_class, SUM(request_count) AS requests FROM api_request_metrics WHERE bucket_start >= '${SQL_SINCE}' GROUP BY source_ip, status_class ORDER BY requests DESC;" \
   > "${REPORT_DIR}/source-status-summary.csv"
 
-python3 - "${REPORT_DIR}" "${SINCE}" <<'PY'
+python3 - "${REPORT_DIR}" "${SINCE}" "${GEOIP_DATABASE_PATH}" <<'PY'
 import csv
 import html
 import json
+import math
 import sys
 from pathlib import Path
 
 report_dir = Path(sys.argv[1])
 since = sys.argv[2]
+geoip_database_path = Path(sys.argv[3])
+
+try:
+  import geoip2.database
+except ImportError:
+  geoip2 = None
+else:
+  geoip2 = geoip2.database
 
 def read_csv(name):
   with (report_dir / name).open(newline="") as source:
@@ -101,6 +111,84 @@ for row in rows:
   row["latency_ms_total"] = float(row["latency_ms_total"])
 for row in endpoint_rows + bucket_rows + status_rows + source_rows + source_endpoint_rows + source_status_rows:
   row["requests"] = int(row["requests"])
+
+geo_by_source = {}
+geoip_error = ""
+geoip_lookup_errors = {}
+geoip_sources_seen = len({row["source_ip"] for row in rows if row["source_ip"] not in {"", "unknown"}})
+geoip_sources_without_coordinates = 0
+if geoip2 is None:
+  geoip_error = "Python package geoip2 is not installed"
+elif not geoip_database_path.is_file():
+  geoip_error = f"GeoIP database not found: {geoip_database_path}"
+else:
+  try:
+    with geoip2.Reader(str(geoip_database_path)) as reader:
+      for source in {row["source_ip"] for row in rows}:
+        if source in {"", "unknown"}:
+          continue
+        try:
+          city = reader.city(source)
+          latitude = city.location.latitude
+          longitude = city.location.longitude
+          if latitude is None or longitude is None:
+            geoip_sources_without_coordinates += 1
+            continue
+          geo_by_source[source] = {
+            "country": city.country.name or "Unknown",
+            "country_code": city.country.iso_code or "",
+            "region": city.subdivisions.most_specific.name or "Unknown",
+            "city": city.city.name or "Unknown",
+            "latitude": latitude,
+            "longitude": longitude,
+            "timezone": city.location.time_zone or "Unknown",
+          }
+        except Exception as error:
+          error_name = type(error).__name__
+          geoip_lookup_errors[error_name] = geoip_lookup_errors.get(error_name, 0) + 1
+          continue
+  except Exception as error:
+    geoip_error = f"Could not read GeoIP database: {error}"
+
+for row in rows:
+  row["geo"] = geo_by_source.get(row["source_ip"])
+
+map_cells = {}
+for row in rows:
+  geo = row["geo"]
+  if not geo:
+    continue
+  cell_key = (round(geo["latitude"], 1), round(geo["longitude"], 1))
+  cell = map_cells.setdefault(cell_key, {
+    "latitude": cell_key[0],
+    "longitude": cell_key[1],
+    "requests": 0,
+    "sources": set(),
+    "endpoints": set(),
+    "countries": set(),
+  })
+  cell["requests"] += row["requests"]
+  cell["sources"].add(row["source_ip"])
+  cell["endpoints"].add(row["endpoint"])
+  cell["countries"].add(geo["country"])
+
+map_points = []
+for cell in map_cells.values():
+  map_points.append({
+    "latitude": cell["latitude"],
+    "longitude": cell["longitude"],
+    "requests": cell["requests"],
+    "source_count": len(cell["sources"]),
+    "endpoint_count": len(cell["endpoints"]),
+    "countries": sorted(cell["countries"]),
+  })
+map_points.sort(key=lambda point: point["requests"], reverse=True)
+geoip_diagnostics = {
+  "sources_seen": geoip_sources_seen,
+  "sources_geolocated": len(geo_by_source),
+  "sources_without_coordinates": geoip_sources_without_coordinates,
+  "lookup_errors": geoip_lookup_errors,
+}
 
 total_requests = sum(row["requests"] for row in rows)
 summary = {
@@ -144,6 +232,65 @@ const barW=data.length?Math.max(2,pw/data.length-2):pw;
 data.forEach((d,i)=>{{const x=p.l+i*(pw/data.length)+1,h=d.requests/max*ph,y=p.t+ph-h;const r=document.createElementNS('http://www.w3.org/2000/svg','rect');r.setAttribute('class','bar');r.setAttribute('x',x);r.setAttribute('y',y);r.setAttribute('width',barW);r.setAttribute('height',h);r.setAttribute('title',`${{d.bucket}}: ${{d.requests}} requests`);svg.appendChild(r);if(data.length<=24||i%Math.ceil(data.length/24)===0){{const t=document.createElementNS('http://www.w3.org/2000/svg','text');t.setAttribute('class','label');t.setAttribute('x',x);t.setAttribute('y',H-28);t.textContent=d.bucket.slice(11,16);svg.appendChild(t);}}}});
 </script></main></body></html>'''
 (report_dir / "index.html").write_text(html_report)
+
+map_json = json.dumps({
+  "since": since,
+  "generated_utc": summary["generated_utc"],
+  "geoip_database": str(geoip_database_path),
+  "geoip_error": geoip_error,
+  "geoip_diagnostics": geoip_diagnostics,
+  "points": map_points,
+}, separators=(",", ":"))
+detail_rows = []
+for row in rows:
+  geo = row["geo"] or {}
+  detail_rows.append({
+    "bucket_start": row["bucket_start"],
+    "source_ip": row["source_ip"],
+    "method": row["method"],
+    "endpoint": row["endpoint"],
+    "requests": row["requests"],
+    "status_class": f"{row['status_class']}xx",
+    "latency_ms_total": row["latency_ms_total"],
+    "country": geo.get("country", "Unknown"),
+    "region": geo.get("region", "Unknown"),
+    "city": geo.get("city", "Unknown"),
+    "latitude": geo.get("latitude", ""),
+    "longitude": geo.get("longitude", ""),
+  })
+detail_json = json.dumps(detail_rows, separators=(",", ":"))
+if geoip_error:
+  map_note = html.escape(geoip_error)
+else:
+  map_note = html.escape(
+    f"{geoip_diagnostics['sources_geolocated']} of {geoip_diagnostics['sources_seen']} public source IPs geolocated; "
+    f"{geoip_diagnostics['sources_without_coordinates']} had no coordinates; "
+    f"{sum(geoip_lookup_errors.values())} lookup errors. Coordinates are approximate and grouped into 0.1 degree cells."
+  )
+map_html = f'''<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="origin">
+<title>tiTTY API source map</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>body{{font:15px system-ui,sans-serif;margin:0;color:#18212b;background:#f5f7f9}}main{{max-width:1500px;margin:0 auto;padding:1rem}}h1{{font-size:1.5rem}}h2{{font-size:1.05rem;margin-top:1.5rem}}.note{{color:#52606d}}#map{{height:620px;border:1px solid #cbd5e0;background:#dbeafe}}table{{width:100%;border-collapse:collapse;background:#fff;font-size:.85rem}}th,td{{padding:.45rem;border-bottom:1px solid #e2e8f0;text-align:left;white-space:nowrap}}th{{position:sticky;top:0;background:#edf2f7}}.table-wrap{{max-height:600px;overflow:auto;border:1px solid #d9e0e7}}.warning{{color:#9b2c2c;font-weight:600}}</style></head>
+<body><main><h1>API source map</h1><p class="note">Window: {html.escape(since)}. Each circle is an approximate location cell; larger circles represent more aggregated requests. Exact source IPs are included because this is an operator-only report. Open this file through a local HTTP server rather than using a <code>file://</code> URL so map tiles receive a valid referrer.</p><p class="{'warning' if geoip_error else 'note'}">{map_note}</p>
+<div id="map" role="img" aria-label="Map of API request source locations"></div>
+<h2>All source and endpoint records</h2><div class="table-wrap"><table><thead><tr><th>bucket_start</th><th>source_ip</th><th>method</th><th>endpoint</th><th>requests</th><th>status_class</th><th>latency_ms_total</th><th>country</th><th>region</th><th>city</th><th>latitude</th><th>longitude</th></tr></thead><tbody id="details"></tbody></table></div></main>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const points={map_json};
+const details={detail_json};
+const map=L.map('map').setView([20,0],2);
+L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',{{maxZoom:18,attribution:'&copy; OpenStreetMap contributors'}}).addTo(map);
+const maxRequests=Math.max(1,...points.points.map(point=>point.requests));
+points.points.forEach(point=>{{
+  const radius=8+Math.sqrt(point.requests/maxRequests)*42;
+  const marker=L.circle([point.latitude,point.longitude],{{radius:radius*10000,color:'#9b2c2c',fillColor:'#e53e3e',fillOpacity:.55,weight:1}}).addTo(map);
+  marker.bindPopup(`<strong>${{point.requests.toLocaleString()}} requests</strong><br>${{point.source_count}} source(s), ${{point.endpoint_count}} endpoint(s)<br>${{point.countries.join(', ')}}`);
+}});
+const body=document.getElementById('details');
+details.forEach(row=>{{const tr=document.createElement('tr');['bucket_start','source_ip','method','endpoint','requests','status_class','latency_ms_total','country','region','city','latitude','longitude'].forEach(key=>{{const td=document.createElement('td');td.textContent=row[key];tr.appendChild(td);}});body.appendChild(tr);}});
+</script></body></html>'''
+(report_dir / "api-source-map.html").write_text(map_html)
 PY
 
 chmod 0640 "${REPORT_DIR}"/*
@@ -153,5 +300,6 @@ aws s3 cp "${REPORT_DIR}/" "${S3_ROOT%/}/api/${STAMP}/" --recursive --only-show-
 find "${OUTPUT_DIR}" -mindepth 1 -maxdepth 1 -type d -mtime +14 -exec rm -rf -- {} +
 
 echo "Generated API metrics report: ${REPORT_DIR}"
+echo "Generated API source map: ${REPORT_DIR}/api-source-map.html"
 echo "Uploaded API metrics report: ${S3_ROOT%/}/api/${STAMP}/"
 echo "Uploaded objects: ${REPORT_OBJECTS}"

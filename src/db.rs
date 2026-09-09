@@ -44,6 +44,17 @@ pub async fn remove_expired_challenges(pool: &SqlitePool) -> anyhow::Result<()> 
     Ok(())
 }
 
+pub async fn remove_expired_live_chat_requests(pool: &SqlitePool) -> anyhow::Result<()> {
+    sqlx::query(
+        "DELETE FROM live_chat_requests
+         WHERE julianday(lease_expires_at) <= julianday('now')
+            OR julianday(hard_expires_at) <= julianday('now')",
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 pub async fn record_api_request(
     pool: &SqlitePool,
     timestamp: DateTime<Utc>,

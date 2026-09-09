@@ -6,3 +6,5 @@
 *.pem
 *.key
 .DS_Store
+/reports/*
+/reports

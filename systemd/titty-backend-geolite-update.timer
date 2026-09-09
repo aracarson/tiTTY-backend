@@ -1,0 +1,10 @@
+[Unit]
+Description=Weekly tiTTY GeoLite2 City database update
+
+[Timer]
+OnCalendar=Sun *-*-* 04:30:00 UTC
+RandomizedDelaySec=1800
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,14 @@
+[Unit]
+Description=Update the tiTTY GeoLite2 City database
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/opt/titty-backend/bin/update-geolite-db.sh
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/GeoIP

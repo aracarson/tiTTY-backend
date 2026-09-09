@@ -55,7 +55,7 @@ chmod 0750 "${CORAZA_DIR}" "${CORAZA_DIR}/rules"
 chmod 0640 "${CORAZA_DIR}"/*.conf "${CORAZA_DIR}"/rules/*.conf
 
 echo "4. Updating /etc/caddy/Caddyfile..."
-cat > /etc/caddy/Caddyfile <<EOF
+cat > /etc/caddy/Caddyfile <<'EOF'
 {
     auto_https disable_redirects
     order coraza_waf first
@@ -63,9 +63,11 @@ cat > /etc/caddy/Caddyfile <<EOF
 
 https://${DOMAIN} {
     coraza_waf {
-        include ${CORAZA_DIR}/coraza.conf
-        include ${CORAZA_DIR}/crs-setup.conf
-        include ${CORAZA_DIR}/rules/*.conf
+        directives `
+            Include /etc/caddy/coraza/coraza.conf
+            Include /etc/caddy/coraza/crs-setup.conf
+            Include /etc/caddy/coraza/rules/*.conf
+        `
     }
 
     encode zstd gzip
@@ -89,6 +91,7 @@ https://${DOMAIN} {
     }
 }
 EOF
+sed -i "s/\${DOMAIN}/${DOMAIN}/g" /etc/caddy/Caddyfile
 
 chown root:caddy /etc/caddy/Caddyfile
 chmod 0640 /etc/caddy/Caddyfile
