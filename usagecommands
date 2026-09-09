@@ -209,7 +209,9 @@ aws s3 presign `
 
 
 
+## Generate api metrics -- run script -- output in s3://identitty/reports/api/YYYYMMDDTHHMMSSZ/
 
+sudo bash /opt/titty-backend/generate-api-metrics.sh
 
 
 ##### REPORTS
