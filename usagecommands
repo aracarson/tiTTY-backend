@@ -119,9 +119,67 @@ sudo install -o root -g root -m 0755 \
   /tmp/generate-api-metrics.sh \
   /opt/titty-backend/generate-api-metrics.sh
 
+## Verify body logging is actually configured before generating a report.
+## The setting must be in the exact EnvironmentFile used by systemd:
+sudo grep -n '^TITTY_LOG_GRAPHQL_BODY=' /etc/titty-backend/titty-backend.env
+
+## If the command above prints nothing, add the setting as root:
+echo 'TITTY_LOG_GRAPHQL_BODY=true' | sudo tee -a /etc/titty-backend/titty-backend.env
+sudo chmod 0640 /etc/titty-backend/titty-backend.env
+sudo chown root:titty-backend /etc/titty-backend/titty-backend.env
+
+## Reload the unit and restart the backend. Editing the file alone does not
+## change the environment of an already-running process:
+sudo systemctl daemon-reload
+sudo systemctl restart titty-backend.service
+sudo systemctl is-active titty-backend.service
+
+## Confirm the running backend process loaded the setting. The Environment
+## property is not reliable for values supplied through EnvironmentFile on
+## all systemd versions:
+pid=$(sudo systemctl show titty-backend.service --property=MainPID --value)
+sudo cat "/proc/${pid}/environ" | tr '\0' '\n' | \
+  grep '^TITTY_LOG_GRAPHQL_BODY='
+
+## Make a GraphQL request, then check the raw event on the EC2 host:
+sudo grep -R 'graphql_request_body' /var/log/titty-backend/api-access.jsonl*
+
+## From Bash, test the public endpoint with the JSON content type:
+curl -sS -X POST 'https://iden.titty.app/graphql' \
+  -H 'Content-Type: application/json' \
+  --data '{"query":"{ __typename }"}'
+
+## From Windows PowerShell, use double quotes around the JSON body:
+curl.exe -sS -X POST 'https://iden.titty.app/graphql' `
+  -H 'Content-Type: application/json' `
+  --data '{"query":"{ __typename }"}'
+
+## From Windows cmd.exe, escape the JSON quotes:
+curl.exe -sS -X POST https://iden.titty.app/graphql ^
+  -H "Content-Type: application/json" ^
+  --data "{\"query\":\"{ __typename }\"}"
+
 ## Generate api metrics -- run script -- output in s3://identitty/reports/api/YYYYMMDDTHHMMSSZ/
 
 sudo bash /opt/titty-backend/generate-api-metrics.sh
+
+## The report also contains graphql-request-bodies.jsonl and
+## graphql-request-bodies.html when
+## TITTY_LOG_GRAPHQL_BODY=true was enabled before the requests occurred.
+## Open the human-readable report:
+Start-Process .\reports\api-metrics\graphql-request-bodies.html
+
+## Or inspect the raw JSONL version:
+Get-Content .\reports\api-metrics\graphql-request-bodies.jsonl
+
+## Verify the detailed report preserved source-IP diversity:
+jq -r '.source_ip' .\reports\api-metrics\graphql-request-bodies.jsonl | \
+  Sort-Object | Get-Unique
+
+## On EC2, compare the generated body report with the raw access events:
+sudo jq -r '.source_ip // .fields.source_ip' \
+  /var/lib/titty-backend/api-metrics/*/graphql-request-bodies.jsonl | \
+  sort | uniq -c | sort -nr
 
 ## Open the private source map report locally. Do not double-click the HTML
 ## from a file:// URL: OpenStreetMap requires an HTTP Referer for tile usage.
@@ -219,7 +277,8 @@ sudo bash /opt/titty-backend/generate-api-metrics.sh
 bash ./reports/getreports.sh
 (
 or open git bash and run:
-sh ./reports/getreports.sh
+cd D:/titty-backend/reports \
+sh ./getreports.sh
 )
 
 

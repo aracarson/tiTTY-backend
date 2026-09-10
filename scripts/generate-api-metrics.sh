@@ -16,6 +16,7 @@ DATABASE_PATH="${TITTY_DATABASE_PATH:-/var/lib/titty-backend/identity.db}"
 OUTPUT_DIR="${TITTY_API_METRICS_DIR:-/var/lib/titty-backend/api-metrics}"
 S3_ROOT="${TITTY_REPORTS_S3_URI:-s3://identitty/reports}"
 GEOIP_DATABASE_PATH="${TITTY_GEOIP_DATABASE_PATH:-/var/lib/GeoIP/GeoLite2-City.mmdb}"
+API_LOG_DIR="${TITTY_API_LOG_DIR:-/var/log/titty-backend}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 REPORT_DIR="${OUTPUT_DIR}/${STAMP}"
 
@@ -74,6 +75,73 @@ sqlite3 -header -csv "${DATABASE_PATH}" \
   "SELECT source_ip, status_class || 'xx' AS status_class, SUM(request_count) AS requests FROM api_request_metrics WHERE bucket_start >= '${SQL_SINCE}' GROUP BY source_ip, status_class ORDER BY requests DESC;" \
   > "${REPORT_DIR}/source-status-summary.csv"
 
+python3 - "${API_LOG_DIR}" "${SQL_SINCE}" "${REPORT_DIR}/graphql-request-bodies.jsonl" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+log_dir = Path(sys.argv[1])
+since_text = sys.argv[2]
+output_path = Path(sys.argv[3])
+
+since = datetime.fromisoformat(since_text.replace("Z", "+00:00"))
+api_events = {}
+body_events = []
+
+def event_time(value):
+  if not isinstance(value, str):
+    return None
+  try:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+  except ValueError:
+    return None
+  return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+if log_dir.is_dir():
+  for log_path in sorted(log_dir.glob("api-access.jsonl*")):
+    try:
+      source = log_path.open(encoding="utf-8")
+    except OSError:
+      continue
+    with source:
+      for line in source:
+        try:
+          record = json.loads(line)
+        except json.JSONDecodeError:
+          continue
+        fields = record.get("fields")
+        if not isinstance(fields, dict):
+          fields = record
+        timestamp = event_time(record.get("timestamp") or fields.get("timestamp"))
+        if timestamp is None or timestamp < since:
+          continue
+        request_id = fields.get("request_id")
+        if not request_id:
+          continue
+        if fields.get("event") == "api_request":
+          api_events[request_id] = {**record, **fields}
+        elif fields.get("event") == "graphql_request_body":
+          body_events.append({**record, **fields})
+
+with output_path.open("w", encoding="utf-8") as output:
+  for body_event in body_events:
+    request_id = body_event.get("request_id")
+    api_event = api_events.get(request_id, {})
+    report = {
+      "timestamp": body_event.get("timestamp"),
+      "request_id": request_id,
+      "request_url": body_event.get("request_url", api_event.get("request_url")),
+      "source_ip": body_event.get("source_ip", api_event.get("source_ip", "unknown")),
+      "method": body_event.get("method", api_event.get("method", "POST")),
+      "endpoint": body_event.get("endpoint", api_event.get("endpoint", "/graphql")),
+      "status": body_event.get("status", api_event.get("status")),
+      "latency_ms": body_event.get("latency_ms", api_event.get("latency_ms")),
+      "body": body_event.get("body", ""),
+    }
+    output.write(json.dumps(report, separators=(",", ":")) + "\n")
+PY
+
 python3 - "${REPORT_DIR}" "${SINCE}" "${GEOIP_DATABASE_PATH}" <<'PY'
 import csv
 import html
@@ -104,6 +172,16 @@ status_rows = read_csv("status-summary.csv")
 source_rows = read_csv("source-summary.csv")
 source_endpoint_rows = read_csv("source-endpoint-summary.csv")
 source_status_rows = read_csv("source-status-summary.csv")
+
+graphql_body_rows = []
+graphql_body_path = report_dir / "graphql-request-bodies.jsonl"
+if graphql_body_path.is_file():
+  with graphql_body_path.open(encoding="utf-8") as source:
+    for line in source:
+      try:
+        graphql_body_rows.append(json.loads(line))
+      except json.JSONDecodeError:
+        continue
 
 for row in rows:
   row["requests"] = int(row["request_count"])
@@ -232,6 +310,40 @@ const barW=data.length?Math.max(2,pw/data.length-2):pw;
 data.forEach((d,i)=>{{const x=p.l+i*(pw/data.length)+1,h=d.requests/max*ph,y=p.t+ph-h;const r=document.createElementNS('http://www.w3.org/2000/svg','rect');r.setAttribute('class','bar');r.setAttribute('x',x);r.setAttribute('y',y);r.setAttribute('width',barW);r.setAttribute('height',h);r.setAttribute('title',`${{d.bucket}}: ${{d.requests}} requests`);svg.appendChild(r);if(data.length<=24||i%Math.ceil(data.length/24)===0){{const t=document.createElementNS('http://www.w3.org/2000/svg','text');t.setAttribute('class','label');t.setAttribute('x',x);t.setAttribute('y',H-28);t.textContent=d.bucket.slice(11,16);svg.appendChild(t);}}}});
 </script></main></body></html>'''
 (report_dir / "index.html").write_text(html_report)
+
+body_sections = []
+for index, record in enumerate(graphql_body_rows, start=1):
+  raw_body = record.get("body", "")
+  try:
+    formatted_body = json.dumps(json.loads(raw_body), indent=2, ensure_ascii=False)
+  except (TypeError, json.JSONDecodeError):
+    formatted_body = str(raw_body)
+  metadata = table(
+    ["timestamp", "request_id", "request_url", "source_ip", "status", "latency_ms"],
+    [{key: record.get(key, "") for key in ["timestamp", "request_id", "request_url", "source_ip", "status", "latency_ms"]}],
+  )
+  body_sections.append(
+    f'<details><summary>Request {index}: {html.escape(str(record.get("timestamp", "unknown")))} '
+    f'({html.escape(str(record.get("request_id", "unknown")))})</summary>'
+    f'{metadata}<pre>{html.escape(formatted_body)}</pre></details>'
+  )
+if not body_sections:
+  body_sections.append('<p class="empty">No GraphQL body events were found in this report window. Enable TITTY_LOG_GRAPHQL_BODY before making requests.</p>')
+
+body_controls = '' if not graphql_body_rows else '''<div class="controls">
+<button type="button" onclick="setAllRequests(true)">Expand all</button>
+<button type="button" onclick="setAllRequests(false)">Collapse all</button>
+</div>'''
+
+graphql_body_html = f'''<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tiTTY GraphQL request bodies</title>
+<style>body{{font:15px system-ui,sans-serif;max-width:1400px;margin:2rem auto;padding:0 1rem;color:#18212b;background:#f5f7f9}}main{{background:#fff;border:1px solid #d9e0e7;border-radius:8px;padding:1.5rem}}h1{{font-size:1.5rem}}h2{{font-size:1.05rem;margin-top:2rem;border-bottom:1px solid #d9e0e7;padding-bottom:.5rem}}.note,.empty{{color:#52606d}}.controls{{display:flex;gap:.5rem;margin:1rem 0;flex-wrap:wrap}}button{{border:1px solid #9aa9b8;border-radius:5px;background:#fff;color:#18212b;padding:.55rem .8rem;cursor:pointer}}button:hover{{background:#edf2f7}}details{{border:1px solid #d9e0e7;border-radius:6px;margin:1rem 0;padding:.75rem;background:#fbfcfd}}summary{{cursor:pointer;font-weight:600}}table{{width:100%;border-collapse:collapse;margin-top:1rem;font-size:.88rem;overflow-wrap:anywhere}}th,td{{padding:.5rem;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top}}th{{background:#f7fafc;white-space:nowrap}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;background:#18212b;color:#f7fafc;border-radius:5px;padding:1rem;overflow:auto}}</style></head>
+<body><main><h1>GraphQL request bodies</h1><p class="note">Window: {html.escape(since)}. Full bodies are shown because TITTY_LOG_GRAPHQL_BODY was enabled. This is a private report and may contain sensitive client data.</p>
+<div><strong>{len(graphql_body_rows)}</strong> GraphQL body event(s)</div><h2>Requests</h2>{body_controls}{''.join(body_sections)}
+<script>function setAllRequests(open){{document.querySelectorAll('details').forEach(function(section){{section.open=open;}});}}</script>
+</main></body></html>'''
+(report_dir / "graphql-request-bodies.html").write_text(graphql_body_html)
 
 map_json = json.dumps({
   "since": since,

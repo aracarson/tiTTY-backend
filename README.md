@@ -237,6 +237,8 @@ sudo bash /opt/titty-backend/bin/generate-api-metrics.sh "7 days ago"
 
 The backend records `/graphql` and `/healthz` calls directly into the `api_request_metrics` table in 15-minute UTC buckets, grouped by observed source address, method, endpoint, and status class. The report writes an HTML histogram plus source, endpoint, bucket, status, and detailed CSV/HTML tables. It uploads to `s3://identitty/reports/api/<timestamp>/` by default and removes local report directories older than 14 days only after the upload succeeds. The EC2 role needs `s3:PutObject` for `arn:aws:s3:::identitty/reports/api/*`.
 
+When `TITTY_LOG_GRAPHQL_BODY=true` is enabled, the API report also writes `graphql-request-bodies.jsonl`. This separate JSONL file contains one full GraphQL body per logged request, plus its timestamp, request ID, URL, source IP, status, and latency when the matching access event is available. It is generated from the rotated API access logs under `TITTY_API_LOG_DIR` and filtered using the same report window. Body logging must be enabled before requests occur; older bodies cannot be reconstructed.
+
 The source map report uses a local GeoLite2 City database. Install the updater and store the MaxMind credentials in a root-only file; do not put them in a shell command, URL, or ordinary application environment file:
 
 ```bash
