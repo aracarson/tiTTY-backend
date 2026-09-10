@@ -1,5 +1,10 @@
 /target
 .env
+
+.venv
+.venv/*
+__pycache__/
+__pycache__/*
 /data/*.db-shm
 /data/*.db-wal
 /data/backups/

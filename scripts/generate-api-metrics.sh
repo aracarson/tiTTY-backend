@@ -128,11 +128,19 @@ with output_path.open("w", encoding="utf-8") as output:
   for body_event in body_events:
     request_id = body_event.get("request_id")
     api_event = api_events.get(request_id, {})
+    source_ip = next(
+      (value for value in [
+        body_event.get("source_ip"),
+        body_event.get("fields", {}).get("source_ip") if isinstance(body_event.get("fields"), dict) else None,
+        api_event.get("source_ip"),
+      ] if isinstance(value, str) and value.strip()),
+      "unknown",
+    )
     report = {
       "timestamp": body_event.get("timestamp"),
       "request_id": request_id,
       "request_url": body_event.get("request_url", api_event.get("request_url")),
-      "source_ip": body_event.get("source_ip", api_event.get("source_ip", "unknown")),
+      "source_ip": source_ip,
       "method": body_event.get("method", api_event.get("method", "POST")),
       "endpoint": body_event.get("endpoint", api_event.get("endpoint", "/graphql")),
       "status": body_event.get("status", api_event.get("status")),
@@ -286,6 +294,44 @@ def table(headers, records):
   if not body:
     body = f'<tr><td colspan="{len(headers)}" class="empty">No data in this window</td></tr>'
   return f"<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
+
+registration_rows = []
+for record in graphql_body_rows:
+  raw_body = record.get("body", "")
+  try:
+    payload = json.loads(raw_body)
+  except (TypeError, json.JSONDecodeError):
+    continue
+  query = payload.get("query", "")
+  if not isinstance(query, str) or "registerAccount" not in query:
+    continue
+  variables = payload.get("variables")
+  registration_input = variables.get("input") if isinstance(variables, dict) else None
+  if not isinstance(registration_input, dict):
+    registration_input = {}
+  registration_rows.append({
+    "registered_at": record.get("timestamp", ""),
+    "identiTTY": registration_input.get("identiTTY", ""),
+    "accountID": registration_input.get("accountID", ""),
+    "source_ip": record.get("source_ip", "unknown"),
+    "status": record.get("status", ""),
+    "request_id": record.get("request_id", "unknown"),
+  })
+
+registration_rows.sort(key=lambda row: row["registered_at"] or "")
+(report_dir / "registered-identities.jsonl").write_text(
+  "".join(json.dumps(row, separators=(",", ":")) + "\n" for row in registration_rows),
+  encoding="utf-8",
+)
+registration_html = f'''<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tiTTY identity registration requests</title>
+<style>body{{font:15px system-ui,sans-serif;max-width:1400px;margin:2rem auto;padding:0 1rem;color:#18212b;background:#f5f7f9}}main{{background:#fff;border:1px solid #d9e0e7;border-radius:8px;padding:1.5rem}}h1{{font-size:1.5rem}}.note,.empty{{color:#52606d}}table{{width:100%;border-collapse:collapse;margin-top:1rem;font-size:.88rem;overflow-wrap:anywhere}}th,td{{padding:.55rem;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top}}th{{background:#f7fafc;white-space:nowrap}}</style></head>
+<body><main><h1>Identity registration requests</h1><p class="note">Window: {html.escape(since)}. These rows come from logged GraphQL request bodies and identify registration attempts observed by the API. HTTP 200 does not by itself prove that GraphQL accepted the mutation; verify the account database if confirmation is required.</p>
+<div><strong>{len(registration_rows)}</strong> registration request(s)</div>
+{table(["registered_at", "identiTTY", "accountID", "source_ip", "status", "request_id"], registration_rows)}
+</main></body></html>'''
+(report_dir / "registered-identities.html").write_text(registration_html, encoding="utf-8")
 
 chart_json = json.dumps([{"bucket": row["bucket_start"], "requests": row["requests"]} for row in bucket_rows], separators=(",", ":"))
 html_report = f'''<!doctype html>

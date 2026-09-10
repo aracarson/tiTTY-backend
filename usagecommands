@@ -119,6 +119,14 @@ sudo install -o root -g root -m 0755 \
   /tmp/generate-api-metrics.sh \
   /opt/titty-backend/generate-api-metrics.sh
 
+
+
+
+
+
+
+  
+
 ## Verify body logging is actually configured before generating a report.
 ## The setting must be in the exact EnvironmentFile used by systemd:
 sudo grep -n '^TITTY_LOG_GRAPHQL_BODY=' /etc/titty-backend/titty-backend.env
@@ -245,9 +253,9 @@ aws s3 presign `
   --expires-in 3600 `
   --region ca-central-1
 
-# On EC2 SSM:
-# curl -fL 'PRESIGNED_URL' -o /tmp/setup-caddy-coraza.sh
-# sudo bash /tmp/setup-caddy-coraza.sh iden.titty.app
+### On EC2 SSM:
+### curl -fL 'PRESIGNED_URL' -o /tmp/setup-caddy-coraza.sh
+### sudo bash /tmp/setup-caddy-coraza.sh iden.titty.app
 
 
 
@@ -267,7 +275,7 @@ aws s3 presign `
 
 
 
-## Generate api metrics -- run script -- output in s3://identitty/reports/api/YYYYMMDDTHHMMSSZ/
+### Generate api metrics -- run script -- output in s3://identitty/reports/api/YYYYMMDDTHHMMSSZ/
 
 sudo bash /opt/titty-backend/generate-api-metrics.sh
 
@@ -286,6 +294,15 @@ python -m http.server 8000 --directory ./reports/api-metrics
 
 http://127.0.0.1:8000/api-source-map.html
 
+http://127.0.0.1:8000/graphql-request-bodies.html
+
+http://127.0.0.1:8000/index.html
+
+
+
+
+
+
 
 
 
@@ -299,3 +316,20 @@ http://127.0.0.1:8000/api-source-map.html
 aws ssm start-session `                                                           
 --target i-0d8718786fb333253 `          
 --region ca-central-1  
+
+
+
+
+
+
+
+
+
+
+
+### Example graphql queries for testing
+
+
+
+
+curl -X POST 'https://iden.titty.app/graphql' --data '{"query": "query BlockedIdentities {\n  blockedIdentities { accountID identiTTY blockedAt }\n}",}'
